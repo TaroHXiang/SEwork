@@ -1,0 +1,43 @@
+:root {
+  --page-bg: #f6f7fb;
+  --panel-border: #d8dee9;
+  --step-bg: #eef4ff;
+  --step-text: #21456f;
+}
+
+body {
+  background: var(--page-bg);
+  color: #1f2937;
+}
+
+.panel {
+  background: #ffffff;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.workflow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workflow-step {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--step-bg);
+  color: var(--step-text);
+  font-weight: 600;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .workflow {
+    grid-template-columns: 1fr;
+  }
+}
