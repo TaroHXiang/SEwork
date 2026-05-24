@@ -36,6 +36,30 @@ body {
   text-align: center;
 }
 
+.dataset-info {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  row-gap: 8px;
+  column-gap: 10px;
+  font-size: 14px;
+}
+
+.dataset-info dt {
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.dataset-info dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cell-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+
 @media (max-width: 768px) {
   .workflow {
     grid-template-columns: 1fr;

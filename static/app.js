@@ -1,9 +1,12 @@
+const inspectDataBtn = document.querySelector("#inspectDataBtn");
 const buildIndexBtn = document.querySelector("#buildIndexBtn");
 const searchByIdBtn = document.querySelector("#searchByIdBtn");
 const searchByVectorBtn = document.querySelector("#searchByVectorBtn");
 const indexStatus = document.querySelector("#indexStatus");
 const healthBadge = document.querySelector("#healthBadge");
 const resultsBody = document.querySelector("#resultsBody");
+const datasetInfo = document.querySelector("#datasetInfo");
+const queryStatus = document.querySelector("#queryStatus");
 
 async function postJson(url, payload) {
   const response = await fetch(url, {
@@ -18,14 +21,45 @@ async function postJson(url, payload) {
   return data;
 }
 
+function dataPath() {
+  return document.querySelector("#dataPath").value.trim();
+}
+
 function setIndexReady(ready) {
   healthBadge.textContent = ready ? "索引已构建" : "未构建索引";
   healthBadge.className = ready ? "badge text-bg-success" : "badge text-bg-secondary";
 }
 
+function activeFilters() {
+  const filters = {};
+  const cellType = document.querySelector("#filterCellType").value.trim();
+  const disease = document.querySelector("#filterDisease").value.trim();
+  const ageGroup = document.querySelector("#filterAgeGroup").value.trim();
+
+  if (cellType) filters.cell_type = cellType;
+  if (disease) filters.disease = disease;
+  if (ageGroup) filters.AgeGroup = ageGroup;
+  return filters;
+}
+
+function renderDatasetInfo(info) {
+  const fields = [
+    ["文件", info.source_path || "-"],
+    ["格式", info.format || "-"],
+    ["细胞数", info.cell_count ?? "-"],
+    ["基因数", info.gene_count ?? "-"],
+    ["向量维度", info.vector_dim ?? "-"],
+    ["向量来源", info.embedding_key || "-"],
+  ];
+
+  datasetInfo.innerHTML = fields
+    .map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`)
+    .join("");
+}
+
 function renderResults(results) {
   if (!results.length) {
-    resultsBody.innerHTML = '<tr><td colspan="6" class="text-center text-secondary py-4">没有匹配结果</td></tr>';
+    resultsBody.innerHTML = '<tr><td colspan="8" class="text-center text-secondary py-4">没有匹配结果</td></tr>';
     return;
   }
 
@@ -35,25 +69,40 @@ function renderResults(results) {
       return `
         <tr>
           <td>${index + 1}</td>
-          <td>${item.cell_id}</td>
+          <td class="cell-id">${item.cell_id}</td>
           <td>${item.distance}</td>
           <td>${item.score}</td>
           <td>${metadata.cell_type || "-"}</td>
-          <td>${metadata.batch || "-"}</td>
+          <td>${metadata.disease || "-"}</td>
+          <td>${metadata.AgeGroup || "-"}</td>
+          <td>${metadata.sex || "-"}</td>
         </tr>
       `;
     })
     .join("");
 }
 
+inspectDataBtn.addEventListener("click", async () => {
+  indexStatus.textContent = "正在检查数据...";
+  inspectDataBtn.disabled = true;
+  try {
+    const info = await postJson("/api/dataset/inspect", { data_path: dataPath() });
+    renderDatasetInfo(info);
+    indexStatus.textContent = "数据检查完成";
+  } catch (error) {
+    indexStatus.textContent = error.message;
+  } finally {
+    inspectDataBtn.disabled = false;
+  }
+});
+
 buildIndexBtn.addEventListener("click", async () => {
-  indexStatus.textContent = "正在构建索引...";
+  indexStatus.textContent = "正在构建索引，liver.h5ad 首次构建可能需要等待...";
   buildIndexBtn.disabled = true;
   try {
-    const data = await postJson("/api/index/build", {
-      data_path: document.querySelector("#dataPath").value.trim(),
-    });
-    indexStatus.textContent = `已构建：${data.cell_count} 个细胞，向量维度 ${data.vector_dim}`;
+    const data = await postJson("/api/index/build", { data_path: dataPath() });
+    renderDatasetInfo({ ...data, source_path: dataPath(), format: dataPath().split(".").pop() });
+    indexStatus.textContent = `已构建：${data.cell_count} 个细胞，${data.vector_dim} 维，耗时 ${data.build_time_ms} ms`;
     setIndexReady(true);
   } catch (error) {
     indexStatus.textContent = error.message;
@@ -64,18 +113,23 @@ buildIndexBtn.addEventListener("click", async () => {
 });
 
 searchByIdBtn.addEventListener("click", async () => {
+  queryStatus.textContent = "正在查询...";
   try {
     const data = await postJson("/api/search/by-id", {
       cell_id: document.querySelector("#cellId").value.trim(),
       top_k: Number(document.querySelector("#topKId").value),
+      filters: activeFilters(),
     });
+    queryStatus.textContent = `查询完成，耗时 ${data.query_time_ms} ms`;
     renderResults(data.results);
   } catch (error) {
-    resultsBody.innerHTML = `<tr><td colspan="6" class="text-danger py-4">${error.message}</td></tr>`;
+    queryStatus.textContent = error.message;
+    resultsBody.innerHTML = `<tr><td colspan="8" class="text-danger py-4">${error.message}</td></tr>`;
   }
 });
 
 searchByVectorBtn.addEventListener("click", async () => {
+  queryStatus.textContent = "正在查询...";
   try {
     const vector = document
       .querySelector("#queryVector")
@@ -84,9 +138,12 @@ searchByVectorBtn.addEventListener("click", async () => {
     const data = await postJson("/api/search/by-vector", {
       vector,
       top_k: Number(document.querySelector("#topKVector").value),
+      filters: activeFilters(),
     });
+    queryStatus.textContent = `查询完成，耗时 ${data.query_time_ms} ms`;
     renderResults(data.results);
   } catch (error) {
-    resultsBody.innerHTML = `<tr><td colspan="6" class="text-danger py-4">${error.message}</td></tr>`;
+    queryStatus.textContent = error.message;
+    resultsBody.innerHTML = `<tr><td colspan="8" class="text-danger py-4">${error.message}</td></tr>`;
   }
 });

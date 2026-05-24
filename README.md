@@ -47,7 +47,7 @@ pip install -r requirements.txt
 docker compose up -d
 ```
 
-如果暂时没有 Docker，系统会自动使用本地文件模式的 Qdrant 客户端，便于中期答辩演示。若要连接 Docker 中的 Qdrant 服务，可设置环境变量：
+如果暂时没有 Docker，系统会自动使用内存模式的 Qdrant 客户端，便于中期答辩演示。内存模式重启服务后需要重新构建索引。若要连接 Docker 中的 Qdrant 服务，可设置环境变量：
 
 ```bash
 set QDRANT_URL=http://127.0.0.1:6333

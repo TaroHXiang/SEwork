@@ -17,26 +17,59 @@
 
     <main class="container py-4">
       <section class="workflow mb-4">
-        <div class="workflow-step">读取数据</div>
-        <div class="workflow-step">提取细胞向量</div>
+        <div class="workflow-step">读取 h5ad 数据</div>
+        <div class="workflow-step">提取 X_pca 向量</div>
         <div class="workflow-step">构建 HNSW 索引</div>
-        <div class="workflow-step">Top-K 检索</div>
-        <div class="workflow-step">结果展示</div>
+        <div class="workflow-step">Top-K 相似检索</div>
+        <div class="workflow-step">结果与指标展示</div>
       </section>
 
       <div class="row g-4">
         <section class="col-lg-4">
-          <div class="panel">
-            <h1 class="h5 mb-3">索引构建</h1>
+          <div class="panel mb-4">
+            <h1 class="h5 mb-3">数据集与索引</h1>
             <label class="form-label" for="dataPath">数据路径</label>
-            <input id="dataPath" class="form-control" value="data/sample_cells.csv">
-            <button id="buildIndexBtn" class="btn btn-primary w-100 mt-3">构建索引</button>
+            <input id="dataPath" class="form-control" value="liver.h5ad">
+            <div class="d-grid gap-2 mt-3">
+              <button id="inspectDataBtn" class="btn btn-outline-secondary">检查数据</button>
+              <button id="buildIndexBtn" class="btn btn-primary">构建索引</button>
+            </div>
             <div id="indexStatus" class="small text-secondary mt-3">等待构建</div>
+          </div>
+
+          <div class="panel">
+            <h2 class="h6 mb-3">数据集信息</h2>
+            <dl id="datasetInfo" class="dataset-info mb-0">
+              <dt>状态</dt>
+              <dd>未加载</dd>
+            </dl>
           </div>
         </section>
 
         <section class="col-lg-8">
           <div class="panel">
+            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+              <div>
+                <h2 class="h5 mb-1">相似细胞查询</h2>
+                <div id="queryStatus" class="small text-secondary">输入细胞 ID 或 30 维向量进行 Top-K 检索</div>
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-4">
+                <label class="form-label" for="filterCellType">细胞类型过滤</label>
+                <input id="filterCellType" class="form-control" placeholder="如 T cell">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="filterDisease">疾病过滤</label>
+                <input id="filterDisease" class="form-control" placeholder="可选">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="filterAgeGroup">年龄组过滤</label>
+                <input id="filterAgeGroup" class="form-control" placeholder="可选">
+              </div>
+            </div>
+
             <ul class="nav nav-tabs" id="queryTabs" role="tablist">
               <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="id-tab" data-bs-toggle="tab" data-bs-target="#id-pane" type="button" role="tab">细胞 ID</button>
@@ -51,11 +84,11 @@
                 <div class="row g-3 align-items-end">
                   <div class="col-md-7">
                     <label class="form-label" for="cellId">细胞编号</label>
-                    <input id="cellId" class="form-control" value="cell_001">
+                    <input id="cellId" class="form-control" value="AAACCTGAGCAGGTCA-1_2">
                   </div>
                   <div class="col-md-2">
                     <label class="form-label" for="topKId">Top-K</label>
-                    <input id="topKId" class="form-control" type="number" min="1" max="20" value="5">
+                    <input id="topKId" class="form-control" type="number" min="1" max="100" value="10">
                   </div>
                   <div class="col-md-3">
                     <button id="searchByIdBtn" class="btn btn-dark w-100">查询</button>
@@ -67,11 +100,11 @@
                 <div class="row g-3 align-items-end">
                   <div class="col-md-7">
                     <label class="form-label" for="queryVector">查询向量</label>
-                    <input id="queryVector" class="form-control" value="0.12,0.22,0.31,0.44,0.58,0.62,0.73,0.81">
+                    <input id="queryVector" class="form-control" placeholder="输入逗号分隔的 30 维向量">
                   </div>
                   <div class="col-md-2">
                     <label class="form-label" for="topKVector">Top-K</label>
-                    <input id="topKVector" class="form-control" type="number" min="1" max="20" value="5">
+                    <input id="topKVector" class="form-control" type="number" min="1" max="100" value="10">
                   </div>
                   <div class="col-md-3">
                     <button id="searchByVectorBtn" class="btn btn-dark w-100">查询</button>
@@ -87,14 +120,16 @@
                     <th>排名</th>
                     <th>细胞编号</th>
                     <th>距离</th>
-                    <th>相似度分数</th>
+                    <th>相似度</th>
                     <th>细胞类型</th>
-                    <th>批次</th>
+                    <th>疾病</th>
+                    <th>年龄组</th>
+                    <th>性别</th>
                   </tr>
                 </thead>
                 <tbody id="resultsBody">
                   <tr>
-                    <td colspan="6" class="text-center text-secondary py-4">暂无查询结果</td>
+                    <td colspan="8" class="text-center text-secondary py-4">暂无查询结果</td>
                   </tr>
                 </tbody>
               </table>
