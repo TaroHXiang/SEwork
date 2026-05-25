@@ -4,5 +4,6 @@ __pycache__/
 .env
 .qdrant/
 qdrant_storage/
+
 *.h5ad
 *.h5mu

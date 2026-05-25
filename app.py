@@ -1,14 +1,49 @@
 from time import perf_counter
+from functools import wraps
 
 from flask import Flask, jsonify, render_template, request
 
-from config import DEFAULT_SAMPLE_DATA
+from config import DEFAULT_SAMPLE_DATA, SECRET_KEY, USER_DB_PATH
+from services.auth_service import AuthError, UserStore
 from services.data_loader import inspect_cell_dataset, load_cell_vectors
 from services.vector_index import CellVectorIndex
 
 
 app = Flask(__name__)
+app.config["SECRET_KEY"] = SECRET_KEY
 index = CellVectorIndex()
+user_store = UserStore(USER_DB_PATH, SECRET_KEY)
+user_store.init_db()
+
+
+def _get_bearer_token():
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header.removeprefix("Bearer ").strip()
+    return None
+
+
+def require_auth(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        try:
+            request.current_user = user_store.verify_token(_get_bearer_token())
+        except AuthError as exc:
+            return jsonify({"error": str(exc)}), 401
+        return view_func(*args, **kwargs)
+
+    return wrapper
+
+
+def require_admin(view_func):
+    @wraps(view_func)
+    @require_auth
+    def wrapper(*args, **kwargs):
+        if request.current_user["role"] != "admin":
+            return jsonify({"error": "admin role required"}), 403
+        return view_func(*args, **kwargs)
+
+    return wrapper
 
 
 @app.route("/")
@@ -25,6 +60,107 @@ def health():
             "dataset": index.dataset_summary,
         }
     )
+
+
+@app.post("/api/auth/register")
+def register():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        user = user_store.register(
+            username=payload.get("username"),
+            password=payload.get("password"),
+            role=payload.get("role", "user"),
+        )
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "registered", "user": user}), 201
+
+
+@app.post("/api/auth/login")
+def login():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        start_time = perf_counter()
+        token, user = user_store.login(
+            username=payload.get("username"),
+            password=payload.get("password"),
+        )
+        elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 401
+
+    return jsonify(
+        {
+            "message": "login successful",
+            "token": token,
+            "token_type": "Bearer",
+            "login_time_ms": elapsed_ms,
+            "user": user,
+        }
+    )
+
+
+@app.get("/api/auth/me")
+@require_auth
+def current_user():
+    return jsonify({"user": request.current_user})
+
+
+@app.get("/api/admin/users")
+@require_admin
+def list_users():
+    return jsonify({"users": user_store.list_users()})
+
+
+@app.post("/api/admin/users")
+@require_admin
+def create_user():
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        user = user_store.register(
+            username=payload.get("username"),
+            password=payload.get("password"),
+            role=payload.get("role", "user"),
+        )
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "user created", "user": user}), 201
+
+
+@app.patch("/api/admin/users/<int:user_id>")
+@require_admin
+def update_user(user_id):
+    payload = request.get_json(silent=True) or {}
+
+    try:
+        user = user_store.update_user(
+            user_id,
+            role=payload.get("role"),
+            is_active=payload.get("is_active"),
+        )
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "user updated", "user": user})
+
+
+@app.delete("/api/admin/users/<int:user_id>")
+@require_admin
+def delete_user(user_id):
+    if request.current_user["id"] == user_id:
+        return jsonify({"error": "cannot delete current logged-in user"}), 400
+
+    try:
+        user = user_store.delete_user(user_id)
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "user deleted", "user": user})
 
 
 @app.post("/api/dataset/inspect")

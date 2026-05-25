@@ -60,6 +60,17 @@ body {
   font-size: 13px;
 }
 
+.auth-panel .btn-group .btn {
+  white-space: nowrap;
+}
+
+.user-list {
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 12px;
+}
+
 @media (max-width: 768px) {
   .workflow {
     grid-template-columns: 1fr;

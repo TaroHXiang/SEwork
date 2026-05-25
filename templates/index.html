@@ -24,6 +24,40 @@
         <div class="workflow-step">结果与指标展示</div>
       </section>
 
+      <section class="panel auth-panel mb-4">
+        <div class="row g-3 align-items-end">
+          <div class="col-lg-3 col-md-6">
+            <label class="form-label" for="authUsername">账号</label>
+            <input id="authUsername" class="form-control" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="请输入账号">
+          </div>
+          <div class="col-lg-3 col-md-6">
+            <label class="form-label" for="authPassword">密码</label>
+            <input id="authPassword" class="form-control" type="password" autocomplete="new-password" placeholder="至少 6 位">
+          </div>
+          <div class="col-lg-3 col-md-6">
+            <label class="form-label d-block">注册身份</label>
+            <div class="btn-group w-100" role="group" aria-label="注册身份">
+              <input type="radio" class="btn-check" name="authRole" id="roleUser" value="user" checked>
+              <label class="btn btn-outline-secondary" for="roleUser">普通用户</label>
+              <input type="radio" class="btn-check" name="authRole" id="roleAdmin" value="admin">
+              <label class="btn btn-outline-secondary" for="roleAdmin">管理员</label>
+            </div>
+          </div>
+          <div class="col-lg-3 col-md-6">
+            <div class="d-grid gap-2 d-md-flex">
+              <button id="registerBtn" class="btn btn-outline-primary flex-fill">注册</button>
+              <button id="loginBtn" class="btn btn-primary flex-fill">登录</button>
+              <button id="logoutBtn" class="btn btn-outline-secondary flex-fill" disabled>退出</button>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+          <span id="authStatus" class="small text-secondary">未登录</span>
+          <button id="loadUsersBtn" class="btn btn-sm btn-outline-dark d-none" disabled>用户管理</button>
+        </div>
+        <div id="userList" class="user-list mt-3 d-none"></div>
+      </section>
+
       <div class="row g-4">
         <section class="col-lg-4">
           <div class="panel mb-4">

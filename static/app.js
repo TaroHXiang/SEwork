@@ -7,18 +7,173 @@ const healthBadge = document.querySelector("#healthBadge");
 const resultsBody = document.querySelector("#resultsBody");
 const datasetInfo = document.querySelector("#datasetInfo");
 const queryStatus = document.querySelector("#queryStatus");
+const registerBtn = document.querySelector("#registerBtn");
+const loginBtn = document.querySelector("#loginBtn");
+const logoutBtn = document.querySelector("#logoutBtn");
+const loadUsersBtn = document.querySelector("#loadUsersBtn");
+const authStatus = document.querySelector("#authStatus");
+const userList = document.querySelector("#userList");
 
-async function postJson(url, payload) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+let authToken = localStorage.getItem("authToken") || "";
+let currentUser = JSON.parse(localStorage.getItem("currentUser") || "null");
+
+function clearAuthInputs() {
+  document.querySelector("#authUsername").value = "";
+  document.querySelector("#authPassword").value = "";
+}
+
+async function requestJson(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+
+  const response = await fetch(url, { ...options, headers });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.error || "请求失败");
   }
   return data;
+}
+
+function postJson(url, payload) {
+  return requestJson(url, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+function getJson(url) {
+  return requestJson(url);
+}
+
+function deleteJson(url) {
+  return requestJson(url, { method: "DELETE" });
+}
+
+function authPayload() {
+  return {
+    username: document.querySelector("#authUsername").value.trim(),
+    password: document.querySelector("#authPassword").value,
+    role: document.querySelector("input[name='authRole']:checked").value,
+  };
+}
+
+function roleLabel(role) {
+  return role === "admin" ? "管理员" : "普通用户";
+}
+
+function saveSession(token, user) {
+  authToken = token;
+  currentUser = user;
+  localStorage.setItem("authToken", token);
+  localStorage.setItem("currentUser", JSON.stringify(user));
+  renderAuthState();
+}
+
+function clearSession() {
+  authToken = "";
+  currentUser = null;
+  localStorage.removeItem("authToken");
+  localStorage.removeItem("currentUser");
+  renderAuthState();
+}
+
+function renderAuthState(message) {
+  if (currentUser) {
+    authStatus.textContent =
+      message || `已登录：${currentUser.username}（${roleLabel(currentUser.role)}）`;
+    authStatus.className = "small text-success";
+    logoutBtn.disabled = false;
+
+    const isAdmin = currentUser.role === "admin";
+    loadUsersBtn.disabled = !isAdmin;
+    loadUsersBtn.classList.toggle("d-none", !isAdmin);
+    if (!isAdmin) {
+      userList.classList.add("d-none");
+      userList.innerHTML = "";
+    }
+    return;
+  }
+
+  authStatus.textContent = message || "未登录";
+  authStatus.className = "small text-secondary";
+  logoutBtn.disabled = true;
+  loadUsersBtn.disabled = true;
+  loadUsersBtn.classList.add("d-none");
+  userList.classList.add("d-none");
+  userList.innerHTML = "";
+}
+
+function renderUsers(users) {
+  userList.innerHTML = `
+    <form id="adminCreateUserForm" class="row g-2 align-items-end mb-3">
+      <div class="col-md-3">
+        <label class="form-label" for="adminNewUsername">账号</label>
+        <input id="adminNewUsername" class="form-control form-control-sm" placeholder="新账号">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="adminNewPassword">密码</label>
+        <input id="adminNewPassword" class="form-control form-control-sm" type="password" placeholder="至少 6 位">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="adminNewRole">角色</label>
+        <select id="adminNewRole" class="form-select form-select-sm">
+          <option value="user">普通用户</option>
+          <option value="admin">管理员</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-sm btn-primary w-100" type="submit">新增用户</button>
+      </div>
+    </form>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>账号</th>
+            <th>角色</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>管理</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${
+            users.length
+              ? users
+                  .map(
+                    (user) => `
+                      <tr>
+                        <td>${user.id}</td>
+                        <td>${user.username}</td>
+                        <td>${roleLabel(user.role)}</td>
+                        <td>${user.is_active ? "启用" : "禁用"}</td>
+                        <td>${user.created_at}</td>
+                        <td>
+                          <button
+                            class="btn btn-sm btn-outline-danger delete-user-btn"
+                            data-user-id="${user.id}"
+                            ${currentUser?.id === user.id ? "disabled" : ""}
+                          >
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    `
+                  )
+                  .join("")
+              : '<tr><td colspan="6" class="text-secondary text-center py-3">暂无用户</td></tr>'
+          }
+        </tbody>
+      </table>
+    </div>
+  `;
+  userList.classList.remove("d-none");
 }
 
 function dataPath() {
@@ -59,7 +214,8 @@ function renderDatasetInfo(info) {
 
 function renderResults(results) {
   if (!results.length) {
-    resultsBody.innerHTML = '<tr><td colspan="8" class="text-center text-secondary py-4">没有匹配结果</td></tr>';
+    resultsBody.innerHTML =
+      '<tr><td colspan="8" class="text-center text-secondary py-4">没有匹配结果</td></tr>';
     return;
   }
 
@@ -81,6 +237,92 @@ function renderResults(results) {
     })
     .join("");
 }
+
+async function loadUsers() {
+  loadUsersBtn.disabled = true;
+  try {
+    const data = await getJson("/api/admin/users");
+    renderUsers(data.users);
+  } catch (error) {
+    userList.innerHTML = `<div class="text-danger small">${error.message}</div>`;
+    userList.classList.remove("d-none");
+  } finally {
+    loadUsersBtn.disabled = currentUser?.role !== "admin";
+  }
+}
+
+registerBtn.addEventListener("click", async () => {
+  registerBtn.disabled = true;
+  authStatus.textContent = "正在注册...";
+  try {
+    const payload = authPayload();
+    const data = await postJson("/api/auth/register", payload);
+    authStatus.textContent = `注册成功：${data.user.username}（${roleLabel(data.user.role)}），请登录`;
+    authStatus.className = "small text-success";
+  } catch (error) {
+    authStatus.textContent = error.message;
+    authStatus.className = "small text-danger";
+  } finally {
+    registerBtn.disabled = false;
+  }
+});
+
+loginBtn.addEventListener("click", async () => {
+  loginBtn.disabled = true;
+  authStatus.textContent = "正在登录...";
+  try {
+    const { username, password } = authPayload();
+    const data = await postJson("/api/auth/login", { username, password });
+    saveSession(data.token, data.user);
+  } catch (error) {
+    authStatus.textContent = error.message;
+    authStatus.className = "small text-danger";
+  } finally {
+    loginBtn.disabled = false;
+  }
+});
+
+logoutBtn.addEventListener("click", () => {
+  clearSession();
+});
+
+loadUsersBtn.addEventListener("click", loadUsers);
+
+userList.addEventListener("submit", async (event) => {
+  if (event.target.id !== "adminCreateUserForm") return;
+
+  event.preventDefault();
+  try {
+    await postJson("/api/admin/users", {
+      username: document.querySelector("#adminNewUsername").value.trim(),
+      password: document.querySelector("#adminNewPassword").value,
+      role: document.querySelector("#adminNewRole").value,
+    });
+    await loadUsers();
+  } catch (error) {
+    authStatus.textContent = error.message;
+    authStatus.className = "small text-danger";
+  }
+});
+
+userList.addEventListener("click", async (event) => {
+  const deleteButton = event.target.closest(".delete-user-btn");
+  if (!deleteButton) return;
+
+  try {
+    deleteButton.disabled = true;
+    await deleteJson(`/api/admin/users/${deleteButton.dataset.userId}`);
+    await loadUsers();
+  } catch (error) {
+    authStatus.textContent = error.message;
+    authStatus.className = "small text-danger";
+    deleteButton.disabled = false;
+  }
+});
+
+clearAuthInputs();
+window.setTimeout(clearAuthInputs, 100);
+renderAuthState();
 
 inspectDataBtn.addEventListener("click", async () => {
   indexStatus.textContent = "正在检查数据...";
