@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>单细胞相似性检索系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <!-- Auth View: 登录/注册界面 -->
+    <div id="authView" class="auth-wrapper">
+      <div class="auth-card">
+        <h2 class="auth-title">系统登录</h2>
+        <p class="auth-subtitle">请登录后访问单细胞相似性检索控制台</p>
+        
+        <div class="auth-form-group">
+          <label class="form-label" for="authUsername">账号</label>
+          <input id="authUsername" class="form-control dashboard-input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="请输入账号">
+        </div>
+        
+        <div class="auth-form-group">
+          <label class="form-label" for="authPassword">密码</label>
+          <input id="authPassword" class="form-control dashboard-input" type="password" autocomplete="new-password" placeholder="至少 6 位">
+        </div>
+        
+        <div class="auth-form-group mb-4">
+          <label class="form-label d-block">注册身份 (仅注册时生效)</label>
+          <div class="btn-group w-100" role="group">
+            <input type="radio" class="btn-check" name="authRole" id="roleUser" value="user" checked>
+            <label class="btn btn-outline-secondary action-btn" for="roleUser">普通用户</label>
+            <input type="radio" class="btn-check" name="authRole" id="roleAdmin" value="admin">
+            <label class="btn btn-outline-secondary action-btn" for="roleAdmin">管理员</label>
+          </div>
+        </div>
+        
+        <div id="authMessage" class="status-message neutral-message d-none mb-3"></div>
+        
+        <div class="auth-actions">
+          <button id="loginBtn" class="btn btn-primary action-btn primary-btn flex-fill">登录</button>
+          <button id="registerBtn" class="btn btn-outline-light action-btn secondary-btn flex-fill">注册</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main View: 主控台 -->
+    <div id="mainView" class="app-shell d-none">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <h1 class="page-title">单细胞相似性检索系统</h1>
+          <div class="topbar-status">
+            <span id="healthBadge" class="status-badge is-idle">未构建索引</span>
+            <span id="healthText" class="status-note">页面初始化后自动检查系统状态</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <a href="https://github.com" target="_blank" class="action-link">帮助文档</a>
+          <span id="currentUserLabel" class="user-label">--</span>
+          <button id="logoutBtn" class="btn action-btn secondary-btn btn-sm">退出登录</button>
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="main-grid">
+          <!-- 左侧：数据集与索引区 -->
+          <aside class="panel dataset-panel">
+            <div class="panel-heading">
+              <h2 class="panel-title">数据集与索引</h2>
+              <p class="panel-description">填写数据路径，先检查数据可用性，再构建索引用于后续相似检索。</p>
+            </div>
+
+            <div class="field-stack">
+              <div>
+                <label class="form-label" for="dataPath">数据路径</label>
+                <input id="dataPath" class="form-control dashboard-input" value="liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
+              </div>
+              <div class="action-row">
+                <button id="inspectDataBtn" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
+                <button id="buildIndexBtn" class="btn btn-primary action-btn primary-btn">构建索引</button>
+              </div>
+            </div>
+
+            <div id="indexStatus" class="status-message neutral-message">等待构建</div>
+
+            <section class="subpanel mt-4">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">数据集摘要</h3>
+                <span class="subpanel-tag">Inspect</span>
+              </div>
+              <dl id="datasetInfo" class="dataset-info">
+                <dt>状态</dt><dd>未加载</dd>
+              </dl>
+            </section>
+          </aside>
+
+          <!-- 右侧：相似细胞查询区 -->
+          <section class="panel query-panel">
+            <div class="panel-heading">
+              <h2 class="panel-title">相似细胞查询</h2>
+              <p class="panel-description">支持按细胞 ID 或向量进行 Top-K 检索，并结合元数据过滤结果。</p>
+            </div>
+
+            <div class="filter-grid">
+              <div>
+                <label class="form-label" for="filterCellType">细胞类型过滤</label>
+                <input id="filterCellType" class="form-control dashboard-input" placeholder="如 T cell">
+              </div>
+              <div>
+                <label class="form-label" for="filterDisease">疾病过滤</label>
+                <input id="filterDisease" class="form-control dashboard-input" placeholder="如 healthy">
+              </div>
+              <div>
+                <label class="form-label" for="filterAgeGroup">年龄组过滤</label>
+                <input id="filterAgeGroup" class="form-control dashboard-input" placeholder="如 adult">
+              </div>
+            </div>
+
+            <ul class="nav query-tabs" id="queryTabs" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="id-tab" data-bs-toggle="tab" data-bs-target="#id-pane" type="button" role="tab" aria-controls="id-pane" aria-selected="true">按 ID 查询</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" id="vector-tab" data-bs-toggle="tab" data-bs-target="#vector-pane" type="button" role="tab" aria-controls="vector-pane" aria-selected="false">按向量查询</button>
+              </li>
+            </ul>
+
+            <div class="tab-content query-content">
+              <div class="tab-pane fade show active" id="id-pane" role="tabpanel" aria-labelledby="id-tab">
+                <div class="query-form-grid">
+                  <div class="query-input-main">
+                    <label class="form-label" for="cellId">细胞编号</label>
+                    <input id="cellId" class="form-control dashboard-input" value="AAACCTGAGCAGGTCA-1_2" placeholder="请输入细胞 ID">
+                  </div>
+                  <div>
+                    <label class="form-label" for="topKId">Top-K</label>
+                    <input id="topKId" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
+                  </div>
+                  <div class="query-submit-cell">
+                    <button id="searchByIdBtn" class="btn action-btn dark-btn w-100">开始查询</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tab-pane fade" id="vector-pane" role="tabpanel" aria-labelledby="vector-tab">
+                <div class="query-form-grid">
+                  <div class="query-input-main">
+                    <label class="form-label" for="queryVector">查询向量</label>
+                    <textarea id="queryVector" class="form-control dashboard-input vector-input" rows="3" placeholder="输入逗号分隔的向量，例如 0.12,0.34,0.56"></textarea>
+                  </div>
+                  <div>
+                    <label class="form-label" for="topKVector">Top-K</label>
+                    <input id="topKVector" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
+                  </div>
+                  <div class="query-submit-cell">
+                    <button id="searchByVectorBtn" class="btn action-btn dark-btn w-100">开始查询</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="queryStatus" class="status-message neutral-message">输入细胞 ID 或向量后即可执行相似检索</div>
+          </section>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="results-header">
+            <div>
+              <h2 class="panel-title mb-1">结果展示区</h2>
+              <p class="panel-description">上方使用 WebGL 渲染 10,000 个 UMAP 模拟点，下方平滑展示 Top-K 相似细胞结果。</p>
+            </div>
+          </div>
+
+          <div class="viz-grid">
+            <section class="viz-card">
+              <div class="viz-card-header">
+                <div>
+                  <h3 class="viz-title">UMAP 散点分布</h3>
+                  <p class="viz-description">基于 `scatterGL` 模拟 10,000 个细胞点，查询后高亮 HNSW 返回结果。</p>
+                </div>
+                <div id="umapLegend" class="viz-legend">Mock 10,000 点</div>
+              </div>
+              <div id="umapChart" class="umap-chart" aria-label="UMAP WebGL 散点图"></div>
+            </section>
+
+            <section class="viz-card viz-side-card">
+              <h3 class="viz-title">查询反馈</h3>
+              <dl class="query-metrics">
+                <dt>当前模式</dt>
+                <dd id="queryModeMetric">未查询</dd>
+                <dt>结果数量</dt>
+                <dd id="resultCountMetric">0</dd>
+                <dt>最近耗时</dt>
+                <dd id="queryTimeMetric">--</dd>
+                <dt>高亮点数</dt>
+                <dd id="highlightMetric">0</dd>
+              </dl>
+            </section>
+          </div>
+
+          <div class="table-shell">
+            <div class="table-responsive">
+              <table class="table results-table align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>细胞编号</th>
+                    <th>距离</th>
+                    <th>相似度</th>
+                    <th>细胞类型</th>
+                    <th>疾病</th>
+                    <th>年龄组</th>
+                    <th>性别</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsBody" class="results-body">
+                  <tr>
+                    <td colspan="8" class="table-state">暂无查询结果，请先构建索引并执行查询</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
