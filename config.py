@@ -4,7 +4,7 @@ import os
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-QDRANT_PATH = BASE_DIR / ".qdrant"
+QDRANT_PATH = Path(os.getenv("QDRANT_PATH", BASE_DIR / ".qdrant"))
 USER_DB_PATH = Path(os.getenv("USER_DB_PATH", DATA_DIR / "users.db"))
 
 QDRANT_URL = os.getenv("QDRANT_URL")

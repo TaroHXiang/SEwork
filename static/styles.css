@@ -287,6 +287,31 @@ body {
   line-height: 1.5;
 }
 
+.index-build-progress {
+  margin-top: 12px;
+}
+
+.index-progress-shell {
+  height: 16px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.index-progress-bar {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 55%, #10b981 100%);
+}
+
+.index-progress-meta {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .neutral-message {
   color: var(--text-body);
   background: rgba(15, 23, 42, 0.45);
@@ -437,6 +462,12 @@ body {
   margin-bottom: 14px;
 }
 
+.viz-right-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .viz-title {
   margin: 0;
   color: var(--text-title);
@@ -496,6 +527,55 @@ body {
   color: var(--text-title);
   font-size: 14px;
   font-weight: 600;
+}
+
+.history-card-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.history-card {
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.42);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-card-title {
+  margin: 0;
+  color: var(--text-title);
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.history-card-subtitle {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.history-card-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.history-card-meta dt {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.history-card-meta dd {
+  margin: 0;
+  color: var(--text-body);
+  overflow-wrap: anywhere;
 }
 
 .table-shell {

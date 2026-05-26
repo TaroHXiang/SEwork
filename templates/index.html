@@ -43,6 +43,51 @@
       </div>
     </div>
 
+    <!-- Hub View: 登录后数据集历史与入口 -->
+    <div id="hubView" class="app-shell d-none">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <h1 class="page-title">单细胞相似性检索系统</h1>
+          <div class="topbar-status">
+            <span class="status-badge is-idle">数据集入口</span>
+            <span class="status-note">选择历史索引或录入新数据集路径进入核心页面</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="hubCurrentUserLabel" class="user-label">--</span>
+          <button id="hubLogoutBtn" class="btn action-btn secondary-btn btn-sm">退出登录</button>
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="panel">
+          <div class="panel-heading">
+            <h2 class="panel-title">我的历史索引</h2>
+            <p class="panel-description">每张卡片代表你已构建过的索引，点击后直接进入对应数据集的可视化与检索页面。</p>
+          </div>
+          <div id="hubHistoryMessage" class="status-message neutral-message">正在加载历史索引...</div>
+          <div id="historyCards" class="history-card-grid"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-heading">
+            <h2 class="panel-title">录入新数据集</h2>
+            <p class="panel-description">输入数据集路径后直接进入核心页面，先看 UMAP，再决定是否构建索引。</p>
+          </div>
+          <div class="field-stack">
+            <div>
+              <label class="form-label" for="hubDataPath">数据路径</label>
+              <input id="hubDataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
+            </div>
+            <div class="action-row">
+              <button id="openNewDatasetBtn" class="btn btn-primary action-btn primary-btn">进入核心页面</button>
+            </div>
+          </div>
+          <div id="hubNewDatasetMessage" class="status-message neutral-message">支持先预览 UMAP，再构建索引。</div>
+        </section>
+      </main>
+    </div>
+
     <!-- Main View: 主控台 -->
     <div id="mainView" class="app-shell d-none">
       <header class="topbar">
@@ -54,6 +99,8 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <button id="backToHubBtn" class="btn action-btn secondary-btn btn-sm">返回历史页</button>
+          <span id="currentDatasetLabel" class="user-label">--</span>
           <a href="https://github.com" target="_blank" class="action-link">帮助文档</a>
           <span id="currentUserLabel" class="user-label">--</span>
           <button id="logoutBtn" class="btn action-btn secondary-btn btn-sm">退出登录</button>
@@ -81,6 +128,17 @@
             </div>
 
             <div id="indexStatus" class="status-message neutral-message">等待构建</div>
+            <div id="indexBuildProgress" class="index-build-progress d-none" aria-live="polite">
+              <div class="progress index-progress-shell">
+                <div
+                  id="indexBuildProgressBar"
+                  class="progress-bar index-progress-bar"
+                  role="progressbar"
+                  style="width: 0%"
+                >0%</div>
+              </div>
+              <div id="indexBuildProgressMeta" class="index-progress-meta"></div>
+            </div>
 
             <section class="subpanel mt-4">
               <div class="subpanel-title-row">
@@ -166,7 +224,7 @@
           <div class="results-header">
             <div>
               <h2 class="panel-title mb-1">结果展示区</h2>
-              <p class="panel-description">上方使用 WebGL 渲染 10,000 个 UMAP 模拟点，下方平滑展示 Top-K 相似细胞结果。</p>
+              <p class="panel-description">上方展示真实细胞二维坐标（优先 UMAP），下方展示 Top-K 相似细胞结果。</p>
             </div>
           </div>
 
@@ -175,9 +233,12 @@
               <div class="viz-card-header">
                 <div>
                   <h3 class="viz-title">UMAP 散点分布</h3>
-                  <p class="viz-description">基于 `scatterGL` 模拟 10,000 个细胞点，查询后高亮 HNSW 返回结果。</p>
+                  <p class="viz-description">基于 `scatterGL` 渲染真实细胞坐标点，查询后高亮 HNSW 返回命中细胞。</p>
                 </div>
-                <div id="umapLegend" class="viz-legend">Mock 10,000 点</div>
+                <div class="viz-right-actions">
+                  <div id="umapLegend" class="viz-legend">等待加载</div>
+                  <button id="resetUmapBtn" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
+                </div>
               </div>
               <div id="umapChart" class="umap-chart" aria-label="UMAP WebGL 散点图"></div>
             </section>
