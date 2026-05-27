@@ -12,8 +12,10 @@ from flask import Flask, jsonify, render_template, request
 from config import DEFAULT_SAMPLE_DATA, SECRET_KEY, USER_DB_PATH
 from services.auth_service import AuthError, UserStore
 from services.data_loader import (
+    DEFAULT_METADATA_FILTER_FIELDS,
     inspect_cell_dataset,
     load_cell_vectors,
+    load_dataset_metadata_options,
     load_dataset_visualization_preview,
 )
 from services.vector_index import CellVectorIndex, build_collection_name
@@ -682,6 +684,66 @@ def dataset_umap_preview():
         return jsonify({"error": str(exc)}), 400
 
     return jsonify(preview)
+
+
+@app.get("/api/dataset/metadata-options")
+@require_auth
+def dataset_metadata_options():
+    data_path = request.args.get("data_path")
+    raw_index_id = request.args.get("index_id")
+    if not data_path and not raw_index_id:
+        return jsonify({"error": "data_path or index_id is required"}), 400
+
+    try:
+        max_values = int(request.args.get("max_values", 200))
+    except Exception as exc:
+        return jsonify({"error": f"invalid max_values: {exc}"}), 400
+
+    raw_fields = request.args.get("fields", "")
+    fields = [item.strip() for item in raw_fields.split(",") if item.strip()]
+    if not fields:
+        fields = list(DEFAULT_METADATA_FILTER_FIELDS)
+
+    dataset_error = None
+    try:
+        if data_path:
+            options = load_dataset_metadata_options(
+                data_path=data_path,
+                fields=fields or None,
+                max_values_per_field=max_values,
+            )
+            options["source"] = "dataset_file"
+            return jsonify(options)
+    except Exception as exc:
+        dataset_error = str(exc)
+
+    payload = {}
+    if raw_index_id:
+        payload["index_id"] = raw_index_id
+
+    try:
+        index_record = _resolve_target_index(payload=payload, required=True)
+        options = index.get_metadata_options(
+            collection_name=index_record["collection_name"],
+            fields=fields,
+            max_values_per_field=max_values,
+        )
+        options.update(
+            {
+                "source": "index_payload",
+                "index_id": index_record["id"],
+                "collection": index_record["collection_name"],
+            }
+        )
+        if data_path:
+            options["source_path"] = data_path
+        if dataset_error:
+            options["dataset_error"] = dataset_error
+        return jsonify(options)
+    except Exception as exc:
+        if dataset_error:
+            return jsonify({"error": dataset_error, "fallback_error": str(exc)}), 400
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.get("/api/indexes")

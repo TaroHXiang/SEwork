@@ -3,12 +3,12 @@ const hubView = document.querySelector("#hubView");
 const mainView = document.querySelector("#mainView");
 
 const authMessage = document.querySelector("#authMessage");
-const currentUserLabel = document.querySelector("#currentUserLabel");
-const hubCurrentUserLabel = document.querySelector("#hubCurrentUserLabel");
 const loginBtn = document.querySelector("#loginBtn");
 const registerBtn = document.querySelector("#registerBtn");
 const logoutBtn = document.querySelector("#logoutBtn");
 const hubLogoutBtn = document.querySelector("#hubLogoutBtn");
+const currentUserLabel = document.querySelector("#currentUserLabel");
+const hubCurrentUserLabel = document.querySelector("#hubCurrentUserLabel");
 
 const historyCards = document.querySelector("#historyCards");
 const hubHistoryMessage = document.querySelector("#hubHistoryMessage");
@@ -32,6 +32,9 @@ const indexBuildProgressMeta = document.querySelector("#indexBuildProgressMeta")
 const filterCellType = document.querySelector("#filterCellType");
 const filterDisease = document.querySelector("#filterDisease");
 const filterAgeGroup = document.querySelector("#filterAgeGroup");
+const filterSex = document.querySelector("#filterSex");
+const filterTissue = document.querySelector("#filterTissue");
+const filterDonorId = document.querySelector("#filterDonorId");
 
 const cellIdInput = document.querySelector("#cellId");
 const topKIdInput = document.querySelector("#topKId");
@@ -40,6 +43,8 @@ const topKVectorInput = document.querySelector("#topKVector");
 const searchByIdBtn = document.querySelector("#searchByIdBtn");
 const searchByVectorBtn = document.querySelector("#searchByVectorBtn");
 const queryStatus = document.querySelector("#queryStatus");
+const evaluateToggle = document.querySelector("#evaluateToggle");
+const evaluationSummary = document.querySelector("#evaluationSummary");
 
 const umapLegend = document.querySelector("#umapLegend");
 const resetUmapBtn = document.querySelector("#resetUmapBtn");
@@ -49,11 +54,24 @@ const queryModeMetric = document.querySelector("#queryModeMetric");
 const resultCountMetric = document.querySelector("#resultCountMetric");
 const queryTimeMetric = document.querySelector("#queryTimeMetric");
 const highlightMetric = document.querySelector("#highlightMetric");
+const precisionMetric = document.querySelector("#precisionMetric");
+const recallMetric = document.querySelector("#recallMetric");
+const annTimeMetric = document.querySelector("#annTimeMetric");
+const exactTimeMetric = document.querySelector("#exactTimeMetric");
 const resultsBody = document.querySelector("#resultsBody");
 
 const UMAP_LIMIT = 10000;
 const HIGHLIGHT_LIMIT = 100;
 const BUILD_JOB_POLL_MS = 1200;
+
+const METADATA_FILTER_FIELDS = [
+  { key: "cell_type", element: filterCellType, label: "Cell Type" },
+  { key: "disease", element: filterDisease, label: "Disease" },
+  { key: "AgeGroup", element: filterAgeGroup, label: "Age Group" },
+  { key: "sex", element: filterSex, label: "Sex" },
+  { key: "tissue", element: filterTissue, label: "Tissue" },
+  { key: "donor_id", element: filterDonorId, label: "Donor ID" },
+];
 
 const state = {
   authToken: localStorage.getItem("authToken") || "",
@@ -62,6 +80,7 @@ const state = {
   activeIndex: null,
   currentDataPath: "",
   currentDatasetInfo: null,
+  metadataOptions: {},
   umapChart: null,
   umapPoints: [],
   umapBaseSeries: [],
@@ -96,46 +115,52 @@ function escapeHtml(value) {
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "--";
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? numericValue.toLocaleString() : String(value);
+  const num = Number(value);
+  return Number.isFinite(num) ? num.toLocaleString() : String(value);
 }
 
 function formatMetric(value) {
   if (value === null || value === undefined || value === "") return "--";
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) return String(value);
-  return numericValue % 1 === 0 ? numericValue.toString() : numericValue.toFixed(6);
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  return num % 1 === 0 ? num.toString() : num.toFixed(6);
 }
 
 function formatTime(value) {
   if (value === null || value === undefined || value === "") return "--";
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? `${numericValue.toFixed(2)} ms` : String(value);
+  const num = Number(value);
+  return Number.isFinite(num) ? `${num.toFixed(2)} ms` : String(value);
+}
+
+function formatRate(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  const num = Number(value);
+  return Number.isFinite(num) ? `${(num * 100).toFixed(2)}%` : "--";
 }
 
 function formatEtaSeconds(value) {
   if (value === null || value === undefined || value === "") return "--";
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) ? `${numericValue.toFixed(1)}s` : String(value);
+  const num = Number(value);
+  return Number.isFinite(num) ? `${num.toFixed(1)} s` : String(value);
 }
 
-function trimPath(pathValue) {
-  return String(pathValue || "").trim();
+function trimText(value) {
+  return String(value || "").trim();
 }
 
 function inferFormat(pathValue) {
-  const path = trimPath(pathValue);
+  const path = trimText(pathValue);
   if (!path.includes(".")) return "-";
   return path.split(".").pop().toLowerCase();
 }
 
 function shortPath(pathValue) {
-  const path = trimPath(pathValue);
+  const path = trimText(pathValue);
   if (!path) return "--";
   const normalized = path.replaceAll("\\", "/");
   const segments = normalized.split("/");
   if (segments.length <= 2) return path;
-  return `${segments.slice(-2).join("/")}`;
+  return segments.slice(-2).join("/");
 }
 
 function setMessage(element, message, tone = "neutral", classSuffix = "") {
@@ -156,11 +181,67 @@ function setBadgeState(mode, text, note) {
   healthText.textContent = note;
 }
 
-function setQueryMetrics({ mode = "未查询", resultCount = 0, queryTime = null, highlightCount = 0 } = {}) {
+function setQueryMetrics({ mode = "Idle", resultCount = 0, queryTime = null, highlightCount = 0 } = {}) {
   queryModeMetric.textContent = mode;
   resultCountMetric.textContent = formatNumber(resultCount);
   queryTimeMetric.textContent = formatTime(queryTime);
   highlightMetric.textContent = formatNumber(highlightCount);
+}
+
+function clearEvaluationMetrics() {
+  if (precisionMetric) precisionMetric.textContent = "--";
+  if (recallMetric) recallMetric.textContent = "--";
+  if (annTimeMetric) annTimeMetric.textContent = "--";
+  if (exactTimeMetric) exactTimeMetric.textContent = "--";
+}
+
+function setEvaluationIdleMessage(enabled) {
+  if (!evaluationSummary) return;
+  if (enabled) {
+    setMessage(
+      evaluationSummary,
+      "Exact evaluation enabled. Query will run ANN + exact baseline.",
+      "neutral"
+    );
+    return;
+  }
+  setMessage(evaluationSummary, "Exact evaluation is off. Query runs ANN only.", "neutral");
+}
+
+function setEvaluationMetrics(evaluation = null) {
+  if (!evaluation) {
+    clearEvaluationMetrics();
+    return;
+  }
+
+  if (precisionMetric) precisionMetric.textContent = formatRate(evaluation.precision_at_k);
+  if (recallMetric) recallMetric.textContent = formatRate(evaluation.recall_at_k);
+  if (annTimeMetric) annTimeMetric.textContent = formatTime(evaluation.ann_query_time_ms);
+  if (exactTimeMetric) exactTimeMetric.textContent = formatTime(evaluation.exact_query_time_ms);
+}
+
+function refreshEvaluationUI(evaluation = null, enabledOverride = null) {
+  const enabled = enabledOverride === null ? Boolean(evaluateToggle?.checked) : Boolean(enabledOverride);
+  if (evaluation) {
+    setEvaluationMetrics(evaluation);
+    if (evaluationSummary) {
+      setMessage(
+        evaluationSummary,
+        `Evaluation done: P@K ${formatRate(evaluation.precision_at_k)}, R@K ${formatRate(evaluation.recall_at_k)}, overlap ${formatNumber(evaluation.overlap_count)}`,
+        "success"
+      );
+    }
+    return;
+  }
+
+  clearEvaluationMetrics();
+  setEvaluationIdleMessage(enabled);
+}
+
+function setEvaluationRunningMessage() {
+  if (!evaluationSummary) return;
+  clearEvaluationMetrics();
+  setMessage(evaluationSummary, "Running ANN + exact evaluation...", "neutral");
 }
 
 function clearBuildPolling() {
@@ -188,11 +269,11 @@ async function requestJson(url, options = {}) {
     try {
       data = JSON.parse(rawText);
     } catch {
-      throw new Error("服务返回了无法解析的数据");
+      throw new Error("Failed to parse server response");
     }
   }
   if (!response.ok) {
-    throw new Error(data.error || `请求失败 (${response.status})`);
+    throw new Error(data.error || `Request failed (${response.status})`);
   }
   return data;
 }
@@ -219,7 +300,7 @@ function showHubView() {
   hubView.classList.remove("d-none");
   mainView.classList.add("d-none");
   const userLabel = state.currentUser
-    ? `${state.currentUser.username} (${state.currentUser.role === "admin" ? "管理员" : "普通用户"})`
+    ? `${state.currentUser.username} (${state.currentUser.role})`
     : "--";
   hubCurrentUserLabel.textContent = userLabel;
 }
@@ -229,14 +310,12 @@ function showMainView() {
   hubView.classList.add("d-none");
   mainView.classList.remove("d-none");
   const userLabel = state.currentUser
-    ? `${state.currentUser.username} (${state.currentUser.role === "admin" ? "管理员" : "普通用户"})`
+    ? `${state.currentUser.username} (${state.currentUser.role})`
     : "--";
   currentUserLabel.textContent = userLabel;
   window.requestAnimationFrame(() => {
     initUmapChartIfNeeded();
-    if (state.umapChart) {
-      state.umapChart.resize();
-    }
+    if (state.umapChart) state.umapChart.resize();
   });
 }
 
@@ -274,26 +353,90 @@ function normalizeDatasetInfo(raw = {}, fallbackPath = "") {
 
 function renderDatasetInfo(info = {}) {
   const fields = [
-    ["路径", info.source_path || "-"],
-    ["格式", info.format || "-"],
-    ["细胞数", formatNumber(info.cell_count)],
-    ["基因数", formatNumber(info.gene_count)],
-    ["向量维度", formatNumber(info.vector_dim)],
-    ["向量来源", info.embedding_key || "-"],
-    ["可视化来源", info.visualization_source || "-"],
+    ["Path", info.source_path || "-"],
+    ["Format", info.format || "-"],
+    ["Cells", formatNumber(info.cell_count)],
+    ["Genes", formatNumber(info.gene_count)],
+    ["Vector Dim", formatNumber(info.vector_dim)],
+    ["Embedding", info.embedding_key || "-"],
+    ["Viz Source", info.visualization_source || "-"],
   ];
-
   datasetInfo.innerHTML = fields
     .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`)
     .join("");
 }
 
 function setCurrentDataset(pathValue) {
-  state.currentDataPath = trimPath(pathValue);
+  state.currentDataPath = trimText(pathValue);
   currentDatasetLabel.textContent = shortPath(state.currentDataPath);
   if (state.currentDataPath) {
     dataPathInput.value = state.currentDataPath;
     hubDataPath.value = state.currentDataPath;
+  }
+}
+
+function setSelectOptions(selectElement, values, label) {
+  if (!selectElement) return;
+
+  const previousValue = selectElement.value;
+  const normalizedValues = Array.from(new Set((values || []).map((v) => trimText(v)).filter(Boolean)));
+
+  selectElement.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All";
+  selectElement.appendChild(allOption);
+
+  for (const value of normalizedValues) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    selectElement.appendChild(option);
+  }
+
+  selectElement.value = previousValue && normalizedValues.includes(previousValue) ? previousValue : "";
+  selectElement.title =
+    normalizedValues.length === 0
+      ? `${label}: no options in current dataset`
+      : `${label}: ${normalizedValues.length} options`;
+}
+
+function resetMetadataFilters() {
+  for (const field of METADATA_FILTER_FIELDS) {
+    setSelectOptions(field.element, [], field.label);
+  }
+  state.metadataOptions = {};
+}
+
+async function loadMetadataOptionsForCurrentDataset() {
+  if (!state.currentDataPath) {
+    resetMetadataFilters();
+    return;
+  }
+
+  const fieldNames = METADATA_FILTER_FIELDS.map((item) => item.key).join(",");
+  const indexQuery = state.activeIndex?.id ? `&index_id=${encodeURIComponent(state.activeIndex.id)}` : "";
+  try {
+    const data = await getJson(
+      `/api/dataset/metadata-options?data_path=${encodeURIComponent(state.currentDataPath)}&fields=${encodeURIComponent(fieldNames)}&max_values=200${indexQuery}`
+    );
+
+    state.metadataOptions = data.options || {};
+    for (const field of METADATA_FILTER_FIELDS) {
+      setSelectOptions(field.element, state.metadataOptions[field.key] || [], field.label);
+    }
+
+    const truncatedFields = Array.isArray(data.truncated_fields) ? data.truncated_fields : [];
+    if (truncatedFields.length) {
+      setMessage(
+        queryStatus,
+        `Metadata options are large, truncated to first 200 values: ${truncatedFields.join(", ")}`,
+        "neutral"
+      );
+    }
+  } catch (error) {
+    resetMetadataFilters();
+    setMessage(queryStatus, `Metadata options load failed: ${error.message}`, "neutral");
   }
 }
 
@@ -306,60 +449,56 @@ function updateIndexProgress(job) {
   indexBuildProgressBar.style.width = `${progress.toFixed(1)}%`;
   indexBuildProgressBar.textContent = `${progress.toFixed(1)}%`;
 
-  const metaParts = [];
-  if (job.stage) metaParts.push(`阶段: ${job.stage}`);
-  if (Number.isFinite(Number(job.processed_cells)) || Number.isFinite(Number(job.total_cells))) {
-    metaParts.push(`进度: ${formatNumber(job.processed_cells)} / ${formatNumber(job.total_cells)}`);
+  const meta = [];
+  if (job.stage) meta.push(`stage: ${job.stage}`);
+  if (job.total_cells !== null && job.total_cells !== undefined) {
+    meta.push(`processed: ${formatNumber(job.processed_cells)} / ${formatNumber(job.total_cells)}`);
   }
   if (job.eta_seconds !== null && job.eta_seconds !== undefined) {
-    metaParts.push(`ETA: ${formatEtaSeconds(job.eta_seconds)}`);
+    meta.push(`eta: ${formatEtaSeconds(job.eta_seconds)}`);
   }
-  indexBuildProgressMeta.textContent = metaParts.join(" · ");
+  indexBuildProgressMeta.textContent = meta.join(" | ");
 }
 
 function activeFilters() {
   const filters = {};
-  const cellType = trimPath(filterCellType.value);
-  const disease = trimPath(filterDisease.value);
-  const ageGroup = trimPath(filterAgeGroup.value);
-  if (cellType) filters.cell_type = cellType;
-  if (disease) filters.disease = disease;
-  if (ageGroup) filters.AgeGroup = ageGroup;
+  for (const field of METADATA_FILTER_FIELDS) {
+    const value = trimText(field.element?.value);
+    if (value) filters[field.key] = value;
+  }
   return filters;
 }
 
 function positiveTopK(inputElement) {
   const topK = Number(inputElement.value);
   if (!Number.isInteger(topK) || topK < 1 || topK > 100) {
-    throw new Error("Top-K 必须是 1 到 100 的整数");
+    throw new Error("Top-K must be an integer between 1 and 100");
   }
   return topK;
 }
 
 function parseVectorInput() {
-  const raw = trimPath(queryVectorInput.value);
-  if (!raw) {
-    throw new Error("请输入查询向量");
-  }
+  const raw = trimText(queryVectorInput.value);
+  if (!raw) throw new Error("Query vector is required");
   const vector = raw
     .split(",")
-    .map((item) => item.trim())
+    .map((v) => v.trim())
     .filter(Boolean)
-    .map((item) => Number(item));
-  if (!vector.length || vector.some((item) => !Number.isFinite(item))) {
-    throw new Error("向量格式错误，请输入逗号分隔的数字");
+    .map((v) => Number(v));
+  if (!vector.length || vector.some((v) => !Number.isFinite(v))) {
+    throw new Error("Invalid vector format");
   }
   return vector;
 }
 
 function ensureIndexSelected() {
   if (!state.activeIndex || !state.activeIndex.id) {
-    throw new Error("请先从历史中加载索引，或先构建索引");
+    throw new Error("No active index. Build or activate an index first.");
   }
 }
 
 function isBuildContextCurrent() {
-  return trimPath(state.currentDataPath) === trimPath(state.buildJobContextPath);
+  return trimText(state.currentDataPath) === trimText(state.buildJobContextPath);
 }
 
 function initUmapChartIfNeeded() {
@@ -374,29 +513,62 @@ function initUmapChartIfNeeded() {
 function buildUmapOption(baseData, highlightData) {
   return {
     animation: false,
-    grid: { left: 12, right: 12, top: 12, bottom: 12, containLabel: false },
+    grid: { left: 12, right: 34, top: 12, bottom: 36, containLabel: false },
+    dataZoom: [
+      {
+        type: "inside",
+        xAxisIndex: 0,
+        filterMode: "none",
+        zoomOnMouseWheel: "ctrl",
+        moveOnMouseWheel: true,
+        moveOnMouseMove: true,
+      },
+      {
+        type: "inside",
+        yAxisIndex: 0,
+        filterMode: "none",
+        zoomOnMouseWheel: "ctrl",
+        moveOnMouseWheel: true,
+        moveOnMouseMove: true,
+      },
+      {
+        type: "slider",
+        xAxisIndex: 0,
+        height: 16,
+        left: 12,
+        right: 34,
+        bottom: 8,
+      },
+      {
+        type: "slider",
+        yAxisIndex: 0,
+        width: 16,
+        top: 12,
+        right: 8,
+        bottom: 36,
+      },
+    ],
     tooltip: {
       trigger: "item",
       backgroundColor: "rgba(15,23,42,0.92)",
       borderColor: "rgba(6,182,212,0.28)",
       textStyle: { color: "#e2e8f0" },
       formatter(params) {
-        if (params.seriesName === "检索命中") {
+        if (params.seriesName === "Hits") {
           const rank = params.data?.value?.[2] ?? "-";
           const score = params.data?.score;
           const distance = params.data?.distance;
           const scorePart = score !== undefined ? `<br>score=${escapeHtml(formatMetric(score))}` : "";
           const distancePart =
             distance !== undefined ? `<br>distance=${escapeHtml(formatMetric(distance))}` : "";
-          return `命中细胞: ${escapeHtml(params.data?.cell_id || "-")}<br>排名: #${escapeHtml(rank)}${scorePart}${distancePart}`;
+          return `cell_id: ${escapeHtml(params.data?.cell_id || "-")}<br>rank: #${escapeHtml(rank)}${scorePart}${distancePart}`;
         }
         const metadata = params.data?.metadata || {};
-        const metadataEntries = Object.entries(metadata)
+        const metadataText = Object.entries(metadata)
           .slice(0, 3)
-          .map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(value)}`)
+          .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`)
           .join("<br>");
-        const metaBlock = metadataEntries ? `<br>${metadataEntries}` : "";
-        return `细胞: ${escapeHtml(params.data?.cell_id || "-")}<br>x=${params.value[0].toFixed(3)}<br>y=${params.value[1].toFixed(3)}${metaBlock}`;
+        return `cell_id: ${escapeHtml(params.data?.cell_id || "-")}<br>x=${params.value[0].toFixed(3)}<br>y=${params.value[1].toFixed(3)}${metadataText ? `<br>${metadataText}` : ""}`;
       },
     },
     xAxis: {
@@ -424,28 +596,29 @@ function buildUmapOption(baseData, highlightData) {
     },
     series: [
       {
-        name: "全部细胞",
-        type: "scatterGL",
-        progressive: 5000,
+        name: "All Cells",
+        type: "scatter",
+        large: true,
+        largeThreshold: 4000,
+        progressive: 6000,
         progressiveThreshold: 10000,
         data: baseData,
-        symbolSize: 2.6,
+        symbolSize: 3.8,
         itemStyle: {
-          color: "rgba(56,189,248,0.78)",
-          opacity: 0.78,
+          color: "rgba(125,211,252,0.70)",
+          opacity: 0.7,
         },
       },
       {
-        name: "检索命中",
+        name: "Hits",
         type: "scatter",
         data: highlightData,
         symbolSize(value) {
           return 12 - Math.min((value?.[2] || 1) - 1, 7) * 0.75;
         },
         itemStyle: {
-          color: "#f8fafc",
-          borderColor: "#ef4444",
-          borderWidth: 2,
+          color: "#ef4444",
+          borderWidth: 0,
           shadowBlur: 12,
           shadowColor: "rgba(239,68,68,0.45)",
         },
@@ -457,14 +630,14 @@ function buildUmapOption(baseData, highlightData) {
 
 function setDefaultUmapLegend() {
   if (!state.umapMeta || state.umapPoints.length === 0) {
-    umapLegend.textContent = "暂无可视化数据";
+    umapLegend.textContent = "No visualization data";
     return;
   }
-  const totalPoints = state.umapMeta.total_points ?? state.umapPoints.length;
-  const returnedPoints = state.umapMeta.returned_points ?? state.umapPoints.length;
+  const total = state.umapMeta.total_points ?? state.umapPoints.length;
+  const returned = state.umapMeta.returned_points ?? state.umapPoints.length;
   const source = state.umapMeta.visualization_source || "unknown";
-  const sampled = state.umapMeta.sampled ? " · 抽样" : "";
-  umapLegend.textContent = `总点数 ${formatNumber(totalPoints)} · 显示 ${formatNumber(returnedPoints)} · ${source}${sampled}`;
+  const sampled = state.umapMeta.sampled ? " | sampled" : "";
+  umapLegend.textContent = `total ${formatNumber(total)} | shown ${formatNumber(returned)} | ${source}${sampled}`;
 }
 
 function applyUmapData(payload = {}) {
@@ -477,16 +650,14 @@ function applyUmapData(payload = {}) {
   }));
 
   state.umapPointByCellId.clear();
-  for (const point of state.umapPoints) {
-    if (point.cell_id) {
-      state.umapPointByCellId.set(point.cell_id, point);
-    }
+  for (const p of state.umapPoints) {
+    if (p.cell_id) state.umapPointByCellId.set(p.cell_id, p);
   }
 
-  state.umapBaseSeries = state.umapPoints.map((point) => ({
-    value: [point.x, point.y],
-    cell_id: point.cell_id,
-    metadata: point.metadata,
+  state.umapBaseSeries = state.umapPoints.map((p) => ({
+    value: [p.x, p.y],
+    cell_id: p.cell_id,
+    metadata: p.metadata,
   }));
 
   state.umapMeta = {
@@ -506,28 +677,38 @@ function applyUmapData(payload = {}) {
 function clearUmapHighlights() {
   if (!state.umapChart) return;
   state.umapChart.setOption({
-    series: [
-      { data: state.umapBaseSeries },
-      { data: [] },
-    ],
+    series: [{ data: state.umapBaseSeries }, { data: [] }],
   });
   setDefaultUmapLegend();
   highlightMetric.textContent = "0";
 }
 
-function applyUmapHighlights(results = [], modeLabel = "查询") {
+function applyUmapHighlights(results = [], modeLabel = "Query") {
   if (!state.umapChart) return 0;
-
   let missingCount = 0;
   const highlights = [];
+
   for (const [index, item] of results.slice(0, HIGHLIGHT_LIMIT).entries()) {
-    const point = state.umapPointByCellId.get(item.cell_id);
-    if (!point) {
+    const base = state.umapPointByCellId.get(item.cell_id);
+    const viz = item?.viz || {};
+    let x = base?.x;
+    let y = base?.y;
+    if ((x === undefined || y === undefined) && viz && viz.x !== undefined && viz.y !== undefined) {
+      const vx = Number(viz.x);
+      const vy = Number(viz.y);
+      if (Number.isFinite(vx) && Number.isFinite(vy)) {
+        x = vx;
+        y = vy;
+      }
+    }
+
+    if (x === undefined || y === undefined) {
       missingCount += 1;
       continue;
     }
+
     highlights.push({
-      value: [point.x, point.y, index + 1],
+      value: [x, y, index + 1],
       cell_id: item.cell_id,
       score: item.score,
       distance: item.distance,
@@ -535,19 +716,14 @@ function applyUmapHighlights(results = [], modeLabel = "查询") {
   }
 
   state.umapChart.setOption({
-    series: [
-      { data: state.umapBaseSeries },
-      { data: highlights },
-    ],
+    series: [{ data: state.umapBaseSeries }, { data: highlights }],
   });
 
-  if (!state.umapMeta || state.umapPoints.length === 0) {
-    umapLegend.textContent = `${modeLabel} · 高亮 ${highlights.length}`;
-  } else {
-    const baseTotal = state.umapMeta.total_points ?? state.umapPoints.length;
-    const missingLabel = missingCount > 0 ? ` · 未定位 ${missingCount}` : "";
-    umapLegend.textContent = `总点数 ${formatNumber(baseTotal)} · ${modeLabel}高亮 ${highlights.length}${missingLabel}`;
-  }
+  const total = state.umapMeta?.total_points ?? state.umapPoints.length;
+  umapLegend.textContent =
+    missingCount > 0
+      ? `total ${formatNumber(total)} | ${modeLabel} highlights ${highlights.length} | missing ${missingCount}`
+      : `total ${formatNumber(total)} | ${modeLabel} highlights ${highlights.length}`;
   return highlights.length;
 }
 
@@ -564,30 +740,28 @@ async function setTableHtmlWithTransition(html) {
 
 async function showTableState(message, tone = "neutral") {
   const stateClass = tone === "error" ? "table-state is-error" : "table-state";
-  await setTableHtmlWithTransition(
-    `<tr><td colspan="8" class="${stateClass}">${escapeHtml(message)}</td></tr>`
-  );
+  await setTableHtmlWithTransition(`<tr><td colspan="8" class="${stateClass}">${escapeHtml(message)}</td></tr>`);
 }
 
 async function renderResults(results = []) {
   if (!Array.isArray(results) || results.length === 0) {
-    await showTableState("没有匹配结果，请调整查询条件后重试");
+    await showTableState("No results. Adjust query or filters.");
     return;
   }
 
   const html = results
-    .map((item, index) => {
-      const metadata = item.metadata || {};
+    .map((item, idx) => {
+      const md = item.metadata || {};
       return `
         <tr>
-          <td>${index + 1}</td>
+          <td>${idx + 1}</td>
           <td class="cell-id">${escapeHtml(item.cell_id)}</td>
           <td>${escapeHtml(formatMetric(item.distance))}</td>
           <td>${escapeHtml(formatMetric(item.score))}</td>
-          <td>${escapeHtml(metadata.cell_type || "-")}</td>
-          <td>${escapeHtml(metadata.disease || "-")}</td>
-          <td>${escapeHtml(metadata.AgeGroup || "-")}</td>
-          <td>${escapeHtml(metadata.sex || "-")}</td>
+          <td>${escapeHtml(md.cell_type || "-")}</td>
+          <td>${escapeHtml(md.disease || "-")}</td>
+          <td>${escapeHtml(md.AgeGroup || "-")}</td>
+          <td>${escapeHtml(md.sex || "-")}</td>
         </tr>
       `;
     })
@@ -598,13 +772,14 @@ async function renderResults(results = []) {
 
 function resetMainPageOutputs() {
   setQueryMetrics();
-  setMessage(queryStatus, "输入细胞 ID 或向量后即可执行相似检索", "neutral");
-  showTableState("暂无查询结果，请先构建索引并执行查询").catch(() => undefined);
+  setMessage(queryStatus, "Ready for query", "neutral");
+  refreshEvaluationUI();
+  showTableState("No query results yet. Build/activate an index then query.").catch(() => undefined);
   clearUmapHighlights();
 }
 
 async function loadHistoryIndexes() {
-  setMessage(hubHistoryMessage, "正在加载历史索引...", "neutral");
+  setMessage(hubHistoryMessage, "Loading history indexes...", "neutral");
   historyCards.innerHTML = "";
   try {
     const data = await getJson("/api/indexes");
@@ -618,81 +793,79 @@ async function loadHistoryIndexes() {
 function renderHistoryCards(indexes) {
   if (!indexes.length) {
     historyCards.innerHTML = "";
-    setMessage(hubHistoryMessage, "暂无历史索引，请先录入数据集并构建索引", "neutral");
+    setMessage(hubHistoryMessage, "No history index. Build one first.", "neutral");
     return;
   }
 
-  setMessage(hubHistoryMessage, `共 ${indexes.length} 条历史记录，点击“进入”即可打开`, "success");
+  setMessage(hubHistoryMessage, `${indexes.length} history indexes found`, "success");
   historyCards.innerHTML = indexes
     .map((item) => {
-      const statusLabel = item.is_active ? "当前激活" : "历史索引";
+      const statusLabel = item.is_active ? "Active" : "History";
       return `
         <article class="history-card">
           <h3 class="history-card-title">${escapeHtml(item.index_name)}</h3>
-          <p class="history-card-subtitle">${escapeHtml(statusLabel)} · 更新 ${escapeHtml(item.updated_at || "-")}</p>
+          <p class="history-card-subtitle">${escapeHtml(statusLabel)} | updated ${escapeHtml(item.updated_at || "-")}</p>
           <dl class="history-card-meta">
-            <dt>数据路径</dt><dd>${escapeHtml(item.data_path || "-")}</dd>
-            <dt>索引位置</dt><dd>${escapeHtml(item.collection_name || "-")}</dd>
-            <dt>格式</dt><dd>${escapeHtml(item.source_format || "-")}</dd>
-            <dt>细胞数</dt><dd>${escapeHtml(formatNumber(item.cell_count))}</dd>
-            <dt>向量维度</dt><dd>${escapeHtml(formatNumber(item.vector_dim))}</dd>
-            <dt>构建耗时</dt><dd>${escapeHtml(formatTime(item.build_time_ms))}</dd>
+            <dt>Data Path</dt><dd>${escapeHtml(item.data_path || "-")}</dd>
+            <dt>Collection</dt><dd>${escapeHtml(item.collection_name || "-")}</dd>
+            <dt>Format</dt><dd>${escapeHtml(item.source_format || "-")}</dd>
+            <dt>Cells</dt><dd>${escapeHtml(formatNumber(item.cell_count))}</dd>
+            <dt>Vector Dim</dt><dd>${escapeHtml(formatNumber(item.vector_dim))}</dd>
+            <dt>Build Time</dt><dd>${escapeHtml(formatTime(item.build_time_ms))}</dd>
           </dl>
-          <button class="btn action-btn secondary-btn btn-sm mt-2" data-open-index="${item.id}">进入</button>
+          <button class="btn action-btn secondary-btn btn-sm mt-2" data-open-index="${item.id}">Open</button>
         </article>
       `;
     })
     .join("");
 
-  for (const button of historyCards.querySelectorAll("[data-open-index]")) {
-    button.addEventListener("click", async () => {
-      const indexId = Number(button.dataset.openIndex);
+  for (const btn of historyCards.querySelectorAll("[data-open-index]")) {
+    btn.addEventListener("click", async () => {
+      const indexId = Number(btn.dataset.openIndex);
       if (!Number.isInteger(indexId) || indexId <= 0) return;
-      button.disabled = true;
+      btn.disabled = true;
       try {
         await openHistoryIndex(indexId);
       } finally {
-        button.disabled = false;
+        btn.disabled = false;
       }
     });
   }
 }
 
 async function openHistoryIndex(indexId) {
-  setMessage(hubHistoryMessage, "正在激活所选索引...", "neutral");
-  const payload = {};
-  const data = await postJson(`/api/indexes/${indexId}/activate`, payload);
+  setMessage(hubHistoryMessage, "Activating selected index...", "neutral");
+  const data = await postJson(`/api/indexes/${indexId}/activate`, {});
   const indexRecord = data.index;
   state.activeIndex = indexRecord;
 
-  const info = normalizeDatasetInfo(indexRecord, indexRecord?.data_path);
   await enterCorePage({
     dataPath: indexRecord?.data_path || "",
-    info,
+    info: normalizeDatasetInfo(indexRecord, indexRecord?.data_path),
     indexRecord,
   });
-  setMessage(hubHistoryMessage, "已进入所选索引页面", "success");
+
+  setMessage(hubHistoryMessage, "Index opened", "success");
 }
 
 async function openNewDatasetFromHub() {
-  const path = trimPath(hubDataPath.value);
+  const path = trimText(hubDataPath.value);
   if (!path) {
-    setMessage(hubNewDatasetMessage, "请输入数据路径", "error");
+    setMessage(hubNewDatasetMessage, "Please input data path", "error");
     return;
   }
 
   openNewDatasetBtn.disabled = true;
-  setMessage(hubNewDatasetMessage, "正在检查数据集并准备进入核心页面...", "neutral");
+  setMessage(hubNewDatasetMessage, "Checking dataset...", "neutral");
   try {
     const infoRaw = await postJson("/api/dataset/inspect", { data_path: path });
-    const info = normalizeDatasetInfo(infoRaw, path);
     state.activeIndex = null;
     await enterCorePage({
       dataPath: path,
-      info,
+      info: normalizeDatasetInfo(infoRaw, path),
       indexRecord: null,
     });
-    setMessage(hubNewDatasetMessage, "已进入核心页面，可先查看 UMAP 再构建索引", "success");
+    setMessage(hubNewDatasetMessage, "Opened core page", "success");
   } catch (error) {
     setMessage(hubNewDatasetMessage, error.message, "error");
   } finally {
@@ -714,35 +887,37 @@ async function enterCorePage({ dataPath, info, indexRecord }) {
   indexBuildProgressMeta.textContent = "";
 
   if (state.activeIndex?.id) {
-    setBadgeState("is-ready", "索引已就绪", "可直接进行 Top-K 相似检索");
-    setMessage(indexStatus, `已加载历史索引：${state.activeIndex.index_name}`, "success");
+    setBadgeState("is-ready", "Index Ready", "Top-K query available");
+    setMessage(indexStatus, `Loaded index: ${state.activeIndex.index_name}`, "success");
   } else {
-    setBadgeState("is-idle", "未构建索引", "当前仅展示原始数据 UMAP，可按需构建索引");
-    setMessage(indexStatus, "当前未加载索引，可先浏览 UMAP 后再构建", "neutral");
+    setBadgeState("is-idle", "No Index", "UMAP available, build index when needed");
+    setMessage(indexStatus, "No active index for current dataset", "neutral");
   }
 
-  await loadUmapForCurrentDataset();
+  await Promise.all([
+    loadUmapForCurrentDataset(),
+    loadMetadataOptionsForCurrentDataset(),
+  ]);
 }
 
 async function loadUmapForCurrentDataset() {
   if (!state.currentDataPath) {
     applyUmapData({ points: [], returned_points: 0, total_points: 0, visualization_source: "none" });
-    setMessage(queryStatus, "缺少数据路径，无法加载 UMAP", "error");
+    setMessage(queryStatus, "No data path for UMAP", "error");
     return;
   }
 
-  umapLegend.textContent = "正在加载 UMAP...";
+  umapLegend.textContent = "Loading UMAP...";
   try {
     const preview = await getJson(
       `/api/dataset/umap-preview?data_path=${encodeURIComponent(state.currentDataPath)}&limit=${UMAP_LIMIT}`
     );
     applyUmapData(preview);
-    const mergedInfo = normalizeDatasetInfo(
+    state.currentDatasetInfo = normalizeDatasetInfo(
       { ...state.currentDatasetInfo, ...preview },
       state.currentDataPath
     );
-    state.currentDatasetInfo = mergedInfo;
-    renderDatasetInfo(mergedInfo);
+    renderDatasetInfo(state.currentDatasetInfo);
     return;
   } catch (previewError) {
     if (state.activeIndex?.id) {
@@ -751,45 +926,44 @@ async function loadUmapForCurrentDataset() {
           `/api/visualization/umap?index_id=${encodeURIComponent(state.activeIndex.id)}&limit=${UMAP_LIMIT}`
         );
         applyUmapData(indexed);
-        setMessage(
-          queryStatus,
-          `原始数据预览失败，已回退到索引坐标可视化：${previewError.message}`,
-          "neutral"
-        );
+        setMessage(queryStatus, `Dataset preview failed, fallback to index payload: ${previewError.message}`, "neutral");
         return;
       } catch (indexError) {
         applyUmapData({ points: [], returned_points: 0, total_points: 0, visualization_source: "none" });
-        setMessage(queryStatus, `UMAP 加载失败：${indexError.message}`, "error");
+        setMessage(queryStatus, `UMAP load failed: ${indexError.message}`, "error");
         return;
       }
     }
     applyUmapData({ points: [], returned_points: 0, total_points: 0, visualization_source: "none" });
-    setMessage(queryStatus, `UMAP 加载失败：${previewError.message}`, "error");
+    setMessage(queryStatus, `UMAP load failed: ${previewError.message}`, "error");
   }
 }
 
 async function inspectDatasetFromMain() {
-  const path = trimPath(dataPathInput.value);
+  const path = trimText(dataPathInput.value);
   if (!path) {
-    setMessage(indexStatus, "请输入数据路径", "error");
+    setMessage(indexStatus, "Please input data path", "error");
     return;
   }
 
   inspectDataBtn.disabled = true;
-  setMessage(indexStatus, "正在检查数据集...", "neutral");
+  setMessage(indexStatus, "Inspecting dataset...", "neutral");
   try {
     const raw = await postJson("/api/dataset/inspect", { data_path: path });
     const info = normalizeDatasetInfo(raw, path);
-    const pathChanged = trimPath(state.activeIndex?.data_path) !== path;
+    const pathChanged = trimText(state.activeIndex?.data_path) !== path;
     if (pathChanged) {
       state.activeIndex = null;
-      setBadgeState("is-idle", "未构建索引", "数据集已切换，可先查看 UMAP 再构建索引");
+      setBadgeState("is-idle", "No Index", "Dataset changed, build/activate index if needed");
     }
     setCurrentDataset(path);
     state.currentDatasetInfo = info;
     renderDatasetInfo(info);
-    await loadUmapForCurrentDataset();
-    setMessage(indexStatus, "数据检查完成，已刷新 UMAP", "success");
+    await Promise.all([
+      loadUmapForCurrentDataset(),
+      loadMetadataOptionsForCurrentDataset(),
+    ]);
+    setMessage(indexStatus, "Dataset inspected and UMAP refreshed", "success");
   } catch (error) {
     setMessage(indexStatus, error.message, "error");
   } finally {
@@ -802,7 +976,7 @@ async function fetchActiveIndexRecord(preferredId = null) {
     const active = await getJson("/api/indexes/active");
     if (active.index) return active.index;
   } catch {
-    // ignored
+    // ignore
   }
 
   try {
@@ -827,8 +1001,8 @@ async function handleBuildJobUpdate(job) {
 
   if (job.status === "queued" || job.status === "running") {
     if (applyToCurrentView) {
-      setBadgeState("is-loading", "索引构建中", "正在写入向量并构建 HNSW 图");
-      setMessage(indexStatus, job.message || "构建进行中...", "neutral");
+      setBadgeState("is-loading", "Building Index", "Writing vectors and creating HNSW");
+      setMessage(indexStatus, job.message || "Build running...", "neutral");
     }
     return;
   }
@@ -836,8 +1010,8 @@ async function handleBuildJobUpdate(job) {
   if (job.status === "failed") {
     clearBuildPolling();
     if (applyToCurrentView) {
-      setBadgeState("is-error", "构建失败", "请检查数据格式或参数设置");
-      setMessage(indexStatus, job.error || job.message || "索引构建失败", "error");
+      setBadgeState("is-error", "Build Failed", "Check data format or parameters");
+      setMessage(indexStatus, job.error || job.message || "Index build failed", "error");
     }
     return;
   }
@@ -848,18 +1022,18 @@ async function handleBuildJobUpdate(job) {
     const result = job.result || {};
     if (applyToCurrentView) {
       state.activeIndex = await fetchActiveIndexRecord(builtIndexId);
-      const mergedInfo = normalizeDatasetInfo(
+      state.currentDatasetInfo = normalizeDatasetInfo(
         { ...state.currentDatasetInfo, ...result },
         state.currentDataPath
       );
-      state.currentDatasetInfo = mergedInfo;
-      renderDatasetInfo(mergedInfo);
-      setBadgeState("is-ready", "索引已就绪", "可直接进行 Top-K 相似检索");
+      renderDatasetInfo(state.currentDatasetInfo);
+      setBadgeState("is-ready", "Index Ready", "Top-K query available");
       setMessage(
         indexStatus,
-        `索引构建完成：${formatNumber(result.cell_count)} 个细胞，耗时 ${formatTime(result.build_time_ms)}`,
+        `Index built: ${formatNumber(result.cell_count)} cells, ${formatTime(result.build_time_ms)}`,
         "success"
       );
+      await loadMetadataOptionsForCurrentDataset();
     }
     await loadHistoryIndexes();
   }
@@ -880,7 +1054,7 @@ async function pollBuildJob(jobId) {
       }
     } catch (error) {
       clearBuildPolling();
-      setBadgeState("is-error", "进度查询失败", "无法获取索引构建状态");
+      setBadgeState("is-error", "Progress Error", "Failed to get build progress");
       setMessage(indexStatus, error.message, "error");
     }
   };
@@ -893,9 +1067,9 @@ async function pollBuildJob(jobId) {
 }
 
 async function buildIndexFromMain() {
-  const path = trimPath(dataPathInput.value);
+  const path = trimText(dataPathInput.value);
   if (!path) {
-    setMessage(indexStatus, "请输入数据路径", "error");
+    setMessage(indexStatus, "Please input data path", "error");
     return;
   }
 
@@ -903,8 +1077,8 @@ async function buildIndexFromMain() {
   setCurrentDataset(path);
   state.activeIndex = null;
   state.buildJobContextPath = path;
-  setBadgeState("is-loading", "索引构建中", "正在提交异步构建任务");
-  setMessage(indexStatus, "已提交构建任务，正在启动...", "neutral");
+  setBadgeState("is-loading", "Building Index", "Submitting async build task");
+  setMessage(indexStatus, "Build job submitted...", "neutral");
   setIndexProgressVisible(true);
   updateIndexProgress({
     progress_pct: 0,
@@ -914,6 +1088,8 @@ async function buildIndexFromMain() {
     eta_seconds: null,
   });
 
+  loadMetadataOptionsForCurrentDataset().catch(() => undefined);
+
   try {
     const response = await postJson("/api/index/build", {
       data_path: path,
@@ -921,12 +1097,12 @@ async function buildIndexFromMain() {
       activate: true,
     });
     if (!response.job_id) {
-      throw new Error("未返回任务 ID，无法跟踪构建进度");
+      throw new Error("Build job id missing");
     }
     await pollBuildJob(response.job_id);
   } catch (error) {
     clearBuildPolling();
-    setBadgeState("is-error", "构建提交失败", "请稍后重试");
+    setBadgeState("is-error", "Submit Failed", "Could not submit build task");
     setMessage(indexStatus, error.message, "error");
   } finally {
     buildIndexBtn.disabled = false;
@@ -942,10 +1118,10 @@ async function searchById() {
     return;
   }
 
-  const cellId = trimPath(cellIdInput.value);
+  const cellId = trimText(cellIdInput.value);
   if (!cellId) {
-    setMessage(queryStatus, "请输入细胞 ID", "error");
-    await showTableState("查询失败：缺少细胞 ID", "error");
+    setMessage(queryStatus, "cell_id is required", "error");
+    await showTableState("Query failed: missing cell_id", "error");
     return;
   }
 
@@ -959,35 +1135,43 @@ async function searchById() {
   }
 
   searchByIdBtn.disabled = true;
-  setMessage(queryStatus, "正在按细胞 ID 查询...", "neutral");
-  setQueryMetrics({ mode: "按 ID 查询", resultCount: 0, queryTime: null, highlightCount: 0 });
+  setMessage(queryStatus, "Searching by ID...", "neutral");
+  const evaluate = Boolean(evaluateToggle?.checked);
+  if (evaluate) {
+    setEvaluationRunningMessage();
+  } else {
+    refreshEvaluationUI(null, false);
+  }
+  setQueryMetrics({ mode: "Search by ID", resultCount: 0, queryTime: null, highlightCount: 0 });
 
   try {
-    const payload = {
+    const data = await postJson("/api/search/by-id", {
       cell_id: cellId,
       top_k: topK,
       filters: activeFilters(),
       index_id: state.activeIndex.id,
-    };
-    const data = await postJson("/api/search/by-id", payload);
+      evaluate,
+    });
     await renderResults(data.results);
-    const highlightCount = applyUmapHighlights(data.results, "按 ID 查询");
+    const highlightCount = applyUmapHighlights(data.results, "ID query");
     setQueryMetrics({
-      mode: "按 ID 查询",
+      mode: "Search by ID",
       resultCount: Array.isArray(data.results) ? data.results.length : 0,
       queryTime: data.query_time_ms,
       highlightCount,
     });
     setMessage(
       queryStatus,
-      `查询完成，返回 ${Array.isArray(data.results) ? data.results.length : 0} 条结果，耗时 ${formatTime(data.query_time_ms)}`,
+      `Done: ${Array.isArray(data.results) ? data.results.length : 0} results, ${formatTime(data.query_time_ms)}`,
       "success"
     );
+    refreshEvaluationUI(data.evaluation || null, evaluate);
   } catch (error) {
     setMessage(queryStatus, error.message, "error");
     await showTableState(error.message, "error");
     clearUmapHighlights();
-    setQueryMetrics({ mode: "按 ID 查询", resultCount: 0, queryTime: null, highlightCount: 0 });
+    setQueryMetrics({ mode: "Search by ID", resultCount: 0, queryTime: null, highlightCount: 0 });
+    refreshEvaluationUI(null, evaluate);
   } finally {
     searchByIdBtn.disabled = false;
   }
@@ -1014,35 +1198,43 @@ async function searchByVector() {
   }
 
   searchByVectorBtn.disabled = true;
-  setMessage(queryStatus, "正在按向量查询...", "neutral");
-  setQueryMetrics({ mode: "按向量查询", resultCount: 0, queryTime: null, highlightCount: 0 });
+  setMessage(queryStatus, "Searching by vector...", "neutral");
+  const evaluate = Boolean(evaluateToggle?.checked);
+  if (evaluate) {
+    setEvaluationRunningMessage();
+  } else {
+    refreshEvaluationUI(null, false);
+  }
+  setQueryMetrics({ mode: "Search by Vector", resultCount: 0, queryTime: null, highlightCount: 0 });
 
   try {
-    const payload = {
+    const data = await postJson("/api/search/by-vector", {
       vector,
       top_k: topK,
       filters: activeFilters(),
       index_id: state.activeIndex.id,
-    };
-    const data = await postJson("/api/search/by-vector", payload);
+      evaluate,
+    });
     await renderResults(data.results);
-    const highlightCount = applyUmapHighlights(data.results, "按向量查询");
+    const highlightCount = applyUmapHighlights(data.results, "Vector query");
     setQueryMetrics({
-      mode: "按向量查询",
+      mode: "Search by Vector",
       resultCount: Array.isArray(data.results) ? data.results.length : 0,
       queryTime: data.query_time_ms,
       highlightCount,
     });
     setMessage(
       queryStatus,
-      `查询完成，返回 ${Array.isArray(data.results) ? data.results.length : 0} 条结果，耗时 ${formatTime(data.query_time_ms)}`,
+      `Done: ${Array.isArray(data.results) ? data.results.length : 0} results, ${formatTime(data.query_time_ms)}`,
       "success"
     );
+    refreshEvaluationUI(data.evaluation || null, evaluate);
   } catch (error) {
     setMessage(queryStatus, error.message, "error");
     await showTableState(error.message, "error");
     clearUmapHighlights();
-    setQueryMetrics({ mode: "按向量查询", resultCount: 0, queryTime: null, highlightCount: 0 });
+    setQueryMetrics({ mode: "Search by Vector", resultCount: 0, queryTime: null, highlightCount: 0 });
+    refreshEvaluationUI(null, evaluate);
   } finally {
     searchByVectorBtn.disabled = false;
   }
@@ -1050,7 +1242,7 @@ async function searchByVector() {
 
 function resetUmapView() {
   clearUmapHighlights();
-  setMessage(queryStatus, "已恢复 UMAP 默认绘制状态", "neutral");
+  setMessage(queryStatus, "UMAP reset to default", "neutral");
 }
 
 async function checkAuthAndInit() {
@@ -1058,7 +1250,6 @@ async function checkAuthAndInit() {
     showAuthView();
     return;
   }
-
   try {
     const data = await getJson("/api/auth/me");
     state.currentUser = data.user;
@@ -1072,11 +1263,11 @@ async function checkAuthAndInit() {
 
 loginBtn.addEventListener("click", async () => {
   loginBtn.disabled = true;
-  setMessage(authMessage, "正在登录...", "neutral", "mb-3");
+  setMessage(authMessage, "Logging in...", "neutral", "mb-3");
   authMessage.classList.remove("d-none");
   try {
     const payload = {
-      username: trimPath(document.querySelector("#authUsername").value),
+      username: trimText(document.querySelector("#authUsername").value),
       password: document.querySelector("#authPassword").value,
     };
     const data = await postJson("/api/auth/login", payload);
@@ -1092,16 +1283,16 @@ loginBtn.addEventListener("click", async () => {
 
 registerBtn.addEventListener("click", async () => {
   registerBtn.disabled = true;
-  setMessage(authMessage, "正在注册...", "neutral", "mb-3");
+  setMessage(authMessage, "Registering...", "neutral", "mb-3");
   authMessage.classList.remove("d-none");
   try {
     const payload = {
-      username: trimPath(document.querySelector("#authUsername").value),
+      username: trimText(document.querySelector("#authUsername").value),
       password: document.querySelector("#authPassword").value,
       role: document.querySelector("input[name='authRole']:checked").value,
     };
     const data = await postJson("/api/auth/register", payload);
-    setMessage(authMessage, `注册成功：${data.user.username}，请点击登录`, "success", "mb-3");
+    setMessage(authMessage, `Registered: ${data.user.username}. Please login.`, "success", "mb-3");
   } catch (error) {
     setMessage(authMessage, error.message, "error", "mb-3");
   } finally {
@@ -1109,13 +1300,8 @@ registerBtn.addEventListener("click", async () => {
   }
 });
 
-logoutBtn.addEventListener("click", () => {
-  clearSession();
-});
-
-hubLogoutBtn.addEventListener("click", () => {
-  clearSession();
-});
+logoutBtn.addEventListener("click", clearSession);
+hubLogoutBtn.addEventListener("click", clearSession);
 
 openNewDatasetBtn.addEventListener("click", () => {
   openNewDatasetFromHub().catch((error) => {
@@ -1152,10 +1338,15 @@ searchByVectorBtn.addEventListener("click", () => {
   });
 });
 
-resetUmapBtn.addEventListener("click", () => {
-  resetUmapView();
-});
+resetUmapBtn.addEventListener("click", resetUmapView);
+
+if (evaluateToggle) {
+  evaluateToggle.addEventListener("change", () => {
+    refreshEvaluationUI();
+  });
+}
 
 setQueryMetrics();
-showTableState("暂无查询结果，请先构建索引并执行查询").catch(() => undefined);
+refreshEvaluationUI();
+showTableState("No query results yet. Build/activate an index then query.").catch(() => undefined);
 checkAuthAndInit();
