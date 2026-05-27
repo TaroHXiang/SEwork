@@ -188,6 +188,89 @@ class CellVectorIndex:
             "points": points,
         }
 
+    def get_metadata_options(
+        self,
+        collection_name: str,
+        fields: list[str],
+        max_values_per_field: int = 200,
+        scan_limit: int = 300000,
+    ) -> dict:
+        if max_values_per_field < 1:
+            raise ValueError("max_values_per_field must be greater than 0")
+        if scan_limit < 1:
+            raise ValueError("scan_limit must be greater than 0")
+
+        target_fields = [field for field in (fields or []) if field]
+        if not target_fields:
+            return {
+                "available_fields": [],
+                "options": {},
+                "unique_counts": {},
+                "truncated_fields": [],
+                "scanned_points": 0,
+            }
+
+        value_sets: dict[str, set[str]] = {field: set() for field in target_fields}
+        offset = None
+        scanned_points = 0
+        has_more = True
+
+        while has_more and scanned_points < scan_limit:
+            records, next_offset = self.client.scroll(
+                collection_name=collection_name,
+                limit=1000,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not records:
+                break
+
+            for record in records:
+                payload = record.payload or {}
+                metadata = payload.get("metadata") or {}
+                for field in target_fields:
+                    current_values = value_sets[field]
+                    if len(current_values) >= max_values_per_field:
+                        continue
+                    value = metadata.get(field)
+                    if value is None:
+                        continue
+                    value_text = str(value).strip()
+                    if not value_text or value_text.lower() in {"nan", "none", "null"}:
+                        continue
+                    current_values.add(value_text)
+
+            scanned_points += len(records)
+            if next_offset is None:
+                has_more = False
+            else:
+                offset = next_offset
+
+            if all(len(value_sets[field]) >= max_values_per_field for field in target_fields):
+                break
+
+        options: dict[str, list[str]] = {}
+        unique_counts: dict[str, int] = {}
+        truncated_fields: list[str] = []
+
+        scan_truncated = has_more or scanned_points >= scan_limit
+        for field in target_fields:
+            values = sorted(value_sets[field])
+            options[field] = values[:max_values_per_field]
+            unique_counts[field] = len(values)
+            if scan_truncated and len(values) >= max_values_per_field:
+                truncated_fields.append(field)
+
+        available_fields = [field for field in target_fields if options.get(field)]
+        return {
+            "available_fields": available_fields,
+            "options": options,
+            "unique_counts": unique_counts,
+            "truncated_fields": truncated_fields,
+            "scanned_points": scanned_points,
+        }
+
     def search_by_cell_id(
         self,
         collection_name: str,
@@ -271,6 +354,7 @@ class CellVectorIndex:
                     "cell_id": hit.payload.get("cell_id"),
                     "distance": round(1 - float(hit.score), 6),
                     "score": round(float(hit.score), 6),
+                    "viz": hit.payload.get("viz", {}),
                     "metadata": hit.payload.get("metadata", {}),
                 }
                 for hit in hits

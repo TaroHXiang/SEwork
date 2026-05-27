@@ -2,9 +2,63 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
+
+DEFAULT_METADATA_FILTER_FIELDS = [
+    "cell_type",
+    "disease",
+    "AgeGroup",
+    "sex",
+    "tissue",
+    "donor_id",
+]
+
+METADATA_FIELD_ALIASES = {
+    "cell_type": [
+        "cell_type",
+        "celltype",
+        "cell type",
+        "CellType",
+        "major_cell_type",
+        "annotation",
+        "cell_ontology_class",
+    ],
+    "disease": [
+        "disease",
+        "condition",
+        "status",
+        "diagnosis",
+        "phenotype",
+    ],
+    "AgeGroup": [
+        "AgeGroup",
+        "age_group",
+        "agegroup",
+        "age group",
+        "age",
+    ],
+    "sex": [
+        "sex",
+        "gender",
+    ],
+    "tissue": [
+        "tissue",
+        "organ",
+        "sample_tissue",
+        "tissue_type",
+    ],
+    "donor_id": [
+        "donor_id",
+        "donor",
+        "donorid",
+        "patient_id",
+        "sample_id",
+        "individual",
+    ],
+}
 
 
 @dataclass
@@ -79,9 +133,7 @@ def inspect_cell_dataset(data_path: str | Path) -> dict:
         }
 
     if path.suffix.lower() == ".h5ad":
-        import scanpy as sc
-
-        adata = sc.read_h5ad(path, backed="r")
+        adata = _read_h5ad_backed(path)
         try:
             embedding_key = "X_pca" if "X_pca" in adata.obsm else "X"
             vector_dim = int(adata.obsm["X_pca"].shape[1]) if embedding_key == "X_pca" else int(adata.n_vars)
@@ -121,6 +173,91 @@ def load_dataset_visualization_preview(
     raise ValueError("unsupported data format, expected .csv or .h5ad")
 
 
+def load_dataset_metadata_options(
+    data_path: str | Path,
+    fields: list[str] | None = None,
+    max_values_per_field: int = 200,
+) -> dict:
+    if max_values_per_field < 1:
+        raise ValueError("max_values_per_field must be greater than 0")
+
+    path = Path(data_path)
+    if not path.exists():
+        raise FileNotFoundError(f"data file not found: {path}")
+
+    target_fields = list(fields or DEFAULT_METADATA_FILTER_FIELDS)
+    target_fields = [field for field in target_fields if field]
+    if not target_fields:
+        target_fields = list(DEFAULT_METADATA_FILTER_FIELDS)
+
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _csv_metadata_options(
+            path=path,
+            target_fields=target_fields,
+            max_values_per_field=max_values_per_field,
+        )
+    if suffix == ".h5ad":
+        return _h5ad_metadata_options(
+            path=path,
+            target_fields=target_fields,
+            max_values_per_field=max_values_per_field,
+        )
+    raise ValueError("unsupported data format, expected .csv or .h5ad")
+
+
+def _normalize_field_token(field_name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (field_name or "").strip().lower())
+
+
+def _resolve_target_field_mapping(
+    *,
+    available_columns: list[str],
+    target_fields: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    normalized_to_original: dict[str, str] = {}
+    for column in available_columns:
+        normalized = _normalize_field_token(column)
+        if normalized and normalized not in normalized_to_original:
+            normalized_to_original[normalized] = column
+
+    resolved: dict[str, str] = {}
+    missing: list[str] = []
+
+    for target in target_fields:
+        if not target:
+            continue
+        candidates = METADATA_FIELD_ALIASES.get(target, []) + [target]
+        matched_column = None
+        for candidate in candidates:
+            normalized_candidate = _normalize_field_token(candidate)
+            if normalized_candidate in normalized_to_original:
+                matched_column = normalized_to_original[normalized_candidate]
+                break
+        if matched_column:
+            resolved[target] = matched_column
+        else:
+            missing.append(target)
+
+    return resolved, missing
+
+
+def _read_h5ad_backed(path: Path):
+    try:
+        import scanpy as sc
+
+        return sc.read_h5ad(path, backed="r")
+    except Exception:
+        try:
+            import anndata as ad
+
+            return ad.read_h5ad(path, backed="r")
+        except Exception as exc:
+            raise ImportError(
+                "reading .h5ad requires either scanpy or anndata to be installed"
+            ) from exc
+
+
 def _load_csv(path: Path) -> CellVectorDataset:
     df = pd.read_csv(path)
     if "cell_id" not in df.columns:
@@ -131,8 +268,23 @@ def _load_csv(path: Path) -> CellVectorDataset:
         raise ValueError("CSV must contain vector columns named v1, v2, ...")
 
     vectors = df[vector_columns].to_numpy(dtype=np.float32)
-    metadata_columns = [col for col in df.columns if col not in {"cell_id", *vector_columns}]
-    metadata = df[metadata_columns].to_dict(orient="records")
+    all_metadata_columns = [col for col in df.columns if col not in {"cell_id", *vector_columns}]
+    resolved_fields, _ = _resolve_target_field_mapping(
+        available_columns=all_metadata_columns,
+        target_fields=DEFAULT_METADATA_FILTER_FIELDS,
+    )
+    metadata_columns = list(resolved_fields.keys())
+    if metadata_columns:
+        canonical_df = pd.DataFrame(
+            {target_key: df[source_col] for target_key, source_col in resolved_fields.items()}
+        )
+        metadata = (
+            canonical_df.astype(str)
+            .replace({"nan": None, "None": None})
+            .to_dict(orient="records")
+        )
+    else:
+        metadata = [{} for _ in range(len(df))]
     visualization_points, visualization_source = _resolve_csv_visualization_points(df, vector_columns)
 
     return CellVectorDataset(
@@ -149,10 +301,46 @@ def _load_csv(path: Path) -> CellVectorDataset:
     )
 
 
-def _load_h5ad(path: Path) -> CellVectorDataset:
-    import scanpy as sc
+def _csv_metadata_options(path: Path, target_fields: list[str], max_values_per_field: int) -> dict:
+    header_df = pd.read_csv(path, nrows=0)
+    available_columns = list(header_df.columns)
+    resolved_fields, missing_fields = _resolve_target_field_mapping(
+        available_columns=available_columns,
+        target_fields=target_fields,
+    )
+    selected_columns = sorted(set(resolved_fields.values()))
+    if not selected_columns:
+        return {
+            "source_path": str(path),
+            "format": "csv",
+            "available_fields": [],
+            "options": {},
+            "unique_counts": {},
+            "truncated_fields": [],
+            "resolved_fields": {},
+            "missing_fields": missing_fields,
+        }
 
-    adata = sc.read_h5ad(path, backed="r")
+    metadata_df = pd.read_csv(path, usecols=selected_columns)
+    options, unique_counts, truncated_fields = _extract_metadata_options(
+        metadata_df=metadata_df,
+        field_mapping=resolved_fields,
+        max_values_per_field=max_values_per_field,
+    )
+    return {
+        "source_path": str(path),
+        "format": "csv",
+        "available_fields": selected_columns,
+        "options": options,
+        "unique_counts": unique_counts,
+        "truncated_fields": truncated_fields,
+        "resolved_fields": resolved_fields,
+        "missing_fields": missing_fields,
+    }
+
+
+def _load_h5ad(path: Path) -> CellVectorDataset:
+    adata = _read_h5ad_backed(path)
     try:
         embedding_key = "X_pca" if "X_pca" in adata.obsm else "X"
         if embedding_key == "X_pca":
@@ -164,18 +352,24 @@ def _load_h5ad(path: Path) -> CellVectorDataset:
             vectors=vectors,
         )
 
-        metadata_columns = [
-            column
-            for column in ["cell_type", "disease", "AgeGroup", "sex", "tissue", "donor_id"]
-            if column in adata.obs.columns
-        ]
-        metadata = (
-            adata.obs[metadata_columns]
-            .astype(str)
-            .replace({"nan": None, "None": None})
-            .reset_index(drop=True)
-            .to_dict(orient="records")
+        available_columns = [str(column) for column in list(adata.obs.columns)]
+        resolved_fields, _ = _resolve_target_field_mapping(
+            available_columns=available_columns,
+            target_fields=DEFAULT_METADATA_FILTER_FIELDS,
         )
+        metadata_columns = list(resolved_fields.keys())
+        if metadata_columns:
+            canonical_df = pd.DataFrame(
+                {target_key: adata.obs[source_col] for target_key, source_col in resolved_fields.items()}
+            )
+            metadata = (
+                canonical_df.astype(str)
+                .replace({"nan": None, "None": None})
+                .reset_index(drop=True)
+                .to_dict(orient="records")
+            )
+        else:
+            metadata = [{} for _ in range(int(adata.n_obs))]
         return CellVectorDataset(
             cell_ids=[str(cell_id) for cell_id in adata.obs_names],
             vectors=vectors,
@@ -192,6 +386,47 @@ def _load_h5ad(path: Path) -> CellVectorDataset:
         adata.file.close()
 
 
+def _h5ad_metadata_options(path: Path, target_fields: list[str], max_values_per_field: int) -> dict:
+    adata = _read_h5ad_backed(path)
+    try:
+        available_columns = [str(column) for column in list(adata.obs.columns)]
+        resolved_fields, missing_fields = _resolve_target_field_mapping(
+            available_columns=available_columns,
+            target_fields=target_fields,
+        )
+        selected_columns = sorted(set(resolved_fields.values()))
+        if not selected_columns:
+            return {
+                "source_path": str(path),
+                "format": "h5ad",
+                "available_fields": [],
+                "options": {},
+                "unique_counts": {},
+                "truncated_fields": [],
+                "resolved_fields": {},
+                "missing_fields": missing_fields,
+            }
+
+        metadata_df = adata.obs[selected_columns].copy()
+        options, unique_counts, truncated_fields = _extract_metadata_options(
+            metadata_df=metadata_df,
+            field_mapping=resolved_fields,
+            max_values_per_field=max_values_per_field,
+        )
+        return {
+            "source_path": str(path),
+            "format": "h5ad",
+            "available_fields": selected_columns,
+            "options": options,
+            "unique_counts": unique_counts,
+            "truncated_fields": truncated_fields,
+            "resolved_fields": resolved_fields,
+            "missing_fields": missing_fields,
+        }
+    finally:
+        adata.file.close()
+
+
 def _sample_indices(total_count: int, limit: int, seed: int) -> np.ndarray:
     if total_count <= 0:
         return np.array([], dtype=np.int64)
@@ -200,6 +435,35 @@ def _sample_indices(total_count: int, limit: int, seed: int) -> np.ndarray:
     rng = np.random.default_rng(seed)
     sampled = rng.choice(total_count, size=limit, replace=False)
     return np.sort(sampled.astype(np.int64))
+
+
+def _extract_metadata_options(
+    metadata_df: pd.DataFrame,
+    field_mapping: dict[str, str],
+    max_values_per_field: int,
+) -> tuple[dict[str, list[str]], dict[str, int], list[str]]:
+    options: dict[str, list[str]] = {}
+    unique_counts: dict[str, int] = {}
+    truncated_fields: list[str] = []
+
+    for output_field, source_column in field_mapping.items():
+        if source_column not in metadata_df.columns:
+            continue
+        raw_values = (
+            metadata_df[source_column]
+            .astype(str)
+            .map(lambda item: item.strip())
+            .replace({"nan": "", "NaN": "", "None": "", "null": "", "NULL": ""})
+        )
+        values = sorted({value for value in raw_values.tolist() if value})
+        unique_counts[output_field] = len(values)
+        if len(values) > max_values_per_field:
+            options[output_field] = values[:max_values_per_field]
+            truncated_fields.append(output_field)
+        else:
+            options[output_field] = values
+
+    return options, unique_counts, truncated_fields
 
 
 def _csv_visualization_preview(path: Path, limit: int, seed: int) -> dict:
@@ -253,9 +517,7 @@ def _csv_visualization_preview(path: Path, limit: int, seed: int) -> dict:
 
 
 def _h5ad_visualization_preview(path: Path, limit: int, seed: int) -> dict:
-    import scanpy as sc
-
-    adata = sc.read_h5ad(path, backed="r")
+    adata = _read_h5ad_backed(path)
     try:
         total_count = int(adata.n_obs)
         indices = _sample_indices(total_count=total_count, limit=limit, seed=seed)

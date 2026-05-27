@@ -386,6 +386,11 @@ body {
   margin-top: 18px;
 }
 
+.evaluation-row .form-check-label {
+  color: var(--text-body);
+  font-weight: 600;
+}
+
 .query-tabs {
   gap: 10px;
   margin-top: 18px;
@@ -496,12 +501,13 @@ body {
 
 .umap-chart {
   width: 100%;
-  height: 360px;
+  height: 500px;
   border-radius: 12px;
   overflow: hidden;
   background:
     radial-gradient(circle at top, rgba(6, 182, 212, 0.12), transparent 35%),
     rgba(2, 6, 23, 0.76);
+  border: 1px solid rgba(148, 163, 184, 0.24);
 }
 
 .viz-side-card {
@@ -695,5 +701,9 @@ body {
 
   .panel {
     padding: 18px;
+  }
+
+  .umap-chart {
+    height: 380px;
   }
 }

@@ -8,24 +8,23 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
   <body>
-    <!-- Auth View: 登录/注册界面 -->
     <div id="authView" class="auth-wrapper">
       <div class="auth-card">
         <h2 class="auth-title">系统登录</h2>
-        <p class="auth-subtitle">请登录后访问单细胞相似性检索控制台</p>
-        
+        <p class="auth-subtitle">登录后访问单细胞相似性检索控制台</p>
+
         <div class="auth-form-group">
           <label class="form-label" for="authUsername">账号</label>
           <input id="authUsername" class="form-control dashboard-input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="请输入账号">
         </div>
-        
+
         <div class="auth-form-group">
           <label class="form-label" for="authPassword">密码</label>
           <input id="authPassword" class="form-control dashboard-input" type="password" autocomplete="new-password" placeholder="至少 6 位">
         </div>
-        
+
         <div class="auth-form-group mb-4">
-          <label class="form-label d-block">注册身份 (仅注册时生效)</label>
+          <label class="form-label d-block">注册身份（仅注册时生效）</label>
           <div class="btn-group w-100" role="group">
             <input type="radio" class="btn-check" name="authRole" id="roleUser" value="user" checked>
             <label class="btn btn-outline-secondary action-btn" for="roleUser">普通用户</label>
@@ -33,9 +32,9 @@
             <label class="btn btn-outline-secondary action-btn" for="roleAdmin">管理员</label>
           </div>
         </div>
-        
+
         <div id="authMessage" class="status-message neutral-message d-none mb-3"></div>
-        
+
         <div class="auth-actions">
           <button id="loginBtn" class="btn btn-primary action-btn primary-btn flex-fill">登录</button>
           <button id="registerBtn" class="btn btn-outline-light action-btn secondary-btn flex-fill">注册</button>
@@ -43,14 +42,13 @@
       </div>
     </div>
 
-    <!-- Hub View: 登录后数据集历史与入口 -->
     <div id="hubView" class="app-shell d-none">
       <header class="topbar">
         <div class="topbar-copy">
           <h1 class="page-title">单细胞相似性检索系统</h1>
           <div class="topbar-status">
             <span class="status-badge is-idle">数据集入口</span>
-            <span class="status-note">选择历史索引或录入新数据集路径进入核心页面</span>
+            <span class="status-note">选择历史索引或录入新数据集进入核心页面</span>
           </div>
         </div>
         <div class="topbar-actions">
@@ -63,7 +61,7 @@
         <section class="panel">
           <div class="panel-heading">
             <h2 class="panel-title">我的历史索引</h2>
-            <p class="panel-description">每张卡片代表你已构建过的索引，点击后直接进入对应数据集的可视化与检索页面。</p>
+            <p class="panel-description">每张卡片对应一个你构建过的索引，点击后直接进入该数据集页面。</p>
           </div>
           <div id="hubHistoryMessage" class="status-message neutral-message">正在加载历史索引...</div>
           <div id="historyCards" class="history-card-grid"></div>
@@ -72,7 +70,7 @@
         <section class="panel">
           <div class="panel-heading">
             <h2 class="panel-title">录入新数据集</h2>
-            <p class="panel-description">输入数据集路径后直接进入核心页面，先看 UMAP，再决定是否构建索引。</p>
+            <p class="panel-description">输入数据路径后进入核心页面，先查看 UMAP，再决定是否构建索引。</p>
           </div>
           <div class="field-stack">
             <div>
@@ -88,7 +86,6 @@
       </main>
     </div>
 
-    <!-- Main View: 主控台 -->
     <div id="mainView" class="app-shell d-none">
       <header class="topbar">
         <div class="topbar-copy">
@@ -109,17 +106,16 @@
 
       <main class="dashboard-main">
         <section class="main-grid">
-          <!-- 左侧：数据集与索引区 -->
           <aside class="panel dataset-panel">
             <div class="panel-heading">
               <h2 class="panel-title">数据集与索引</h2>
-              <p class="panel-description">填写数据路径，先检查数据可用性，再构建索引用于后续相似检索。</p>
+              <p class="panel-description">检查数据可用性、构建 HNSW 索引，并管理当前查询上下文。</p>
             </div>
 
             <div class="field-stack">
               <div>
                 <label class="form-label" for="dataPath">数据路径</label>
-                <input id="dataPath" class="form-control dashboard-input" value="liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
+                <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
               </div>
               <div class="action-row">
                 <button id="inspectDataBtn" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
@@ -151,29 +147,59 @@
             </section>
           </aside>
 
-          <!-- 右侧：相似细胞查询区 -->
           <section class="panel query-panel">
             <div class="panel-heading">
               <h2 class="panel-title">相似细胞查询</h2>
-              <p class="panel-description">支持按细胞 ID 或向量进行 Top-K 检索，并结合元数据过滤结果。</p>
+              <p class="panel-description">支持按细胞 ID 或向量进行 Top-K 检索，并结合元数据下拉筛选。</p>
             </div>
 
             <div class="filter-grid">
               <div>
                 <label class="form-label" for="filterCellType">细胞类型过滤</label>
-                <input id="filterCellType" class="form-control dashboard-input" placeholder="如 T cell">
+                <select id="filterCellType" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
               <div>
                 <label class="form-label" for="filterDisease">疾病过滤</label>
-                <input id="filterDisease" class="form-control dashboard-input" placeholder="如 healthy">
+                <select id="filterDisease" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
               <div>
                 <label class="form-label" for="filterAgeGroup">年龄组过滤</label>
-                <input id="filterAgeGroup" class="form-control dashboard-input" placeholder="如 adult">
+                <select id="filterAgeGroup" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterSex">性别过滤</label>
+                <select id="filterSex" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterTissue">组织过滤</label>
+                <select id="filterTissue" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterDonorId">捐赠者ID过滤</label>
+                <select id="filterDonorId" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
             </div>
 
-            <ul class="nav query-tabs" id="queryTabs" role="tablist">
+            <div class="d-flex align-items-center justify-content-between mt-3 evaluation-row">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="evaluateToggle">
+                <label class="form-check-label" for="evaluateToggle">Enable ANN vs Exact evaluation</label>
+              </div>
+            </div>
+
+<ul class="nav query-tabs" id="queryTabs" role="tablist">
               <li class="nav-item" role="presentation">
                 <button class="nav-link active" id="id-tab" data-bs-toggle="tab" data-bs-target="#id-pane" type="button" role="tab" aria-controls="id-pane" aria-selected="true">按 ID 查询</button>
               </li>
@@ -217,6 +243,7 @@
             </div>
 
             <div id="queryStatus" class="status-message neutral-message">输入细胞 ID 或向量后即可执行相似检索</div>
+            <div id="evaluationSummary" class="status-message neutral-message">Exact evaluation is off.</div>
           </section>
         </section>
 
@@ -224,7 +251,7 @@
           <div class="results-header">
             <div>
               <h2 class="panel-title mb-1">结果展示区</h2>
-              <p class="panel-description">上方展示真实细胞二维坐标（优先 UMAP），下方展示 Top-K 相似细胞结果。</p>
+              <p class="panel-description">上方为全量细胞 UMAP 分布，下方为 Top-K 检索结果。</p>
             </div>
           </div>
 
@@ -233,14 +260,14 @@
               <div class="viz-card-header">
                 <div>
                   <h3 class="viz-title">UMAP 散点分布</h3>
-                  <p class="viz-description">基于 `scatterGL` 渲染真实细胞坐标点，查询后高亮 HNSW 返回命中细胞。</p>
+                  <p class="viz-description">先展示数据集坐标，查询后高亮命中细胞。</p>
                 </div>
                 <div class="viz-right-actions">
                   <div id="umapLegend" class="viz-legend">等待加载</div>
                   <button id="resetUmapBtn" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
                 </div>
               </div>
-              <div id="umapChart" class="umap-chart" aria-label="UMAP WebGL 散点图"></div>
+              <div id="umapChart" class="umap-chart" aria-label="UMAP 散点图"></div>
             </section>
 
             <section class="viz-card viz-side-card">
@@ -254,6 +281,14 @@
                 <dd id="queryTimeMetric">--</dd>
                 <dt>高亮点数</dt>
                 <dd id="highlightMetric">0</dd>
+                <dt>Precision@K</dt>
+                <dd id="precisionMetric">--</dd>
+                <dt>Recall@K</dt>
+                <dd id="recallMetric">--</dd>
+                <dt>ANN Time</dt>
+                <dd id="annTimeMetric">--</dd>
+                <dt>Exact Time</dt>
+                <dd id="exactTimeMetric">--</dd>
               </dl>
             </section>
           </div>
