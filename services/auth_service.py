@@ -1,11 +1,13 @@
 import json
 import secrets
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from werkzeug.security import check_password_hash, generate_password_hash
+
+import pymysql
+from pymysql.cursors import DictCursor
 
 
 VALID_ROLES = {"user", "admin"}
@@ -15,53 +17,96 @@ class AuthError(Exception):
     pass
 
 
+class _MySQLConnection:
+    def __init__(self, database_url):
+        parsed = urlparse(database_url)
+        self._conn = pymysql.connect(
+            host=parsed.hostname or "127.0.0.1",
+            port=parsed.port or 3306,
+            user=unquote(parsed.username or ""),
+            password=unquote(parsed.password or ""),
+            database=(parsed.path or "/").lstrip("/"),
+            charset="utf8mb4",
+            cursorclass=DictCursor,
+            autocommit=False,
+        )
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, _exc, _tb):
+        if exc_type:
+            self._conn.rollback()
+        else:
+            self._conn.commit()
+        self._conn.close()
+
+    def execute(self, sql, params=None):
+        cursor = self._conn.cursor()
+        cursor.execute(self._convert_sql(sql), params or ())
+        return cursor
+
+    def _convert_sql(self, sql):
+        return sql.replace("?", "%s")
+
+
 class UserStore:
-    def __init__(self, db_path, secret_key, token_max_age=7 * 24 * 60 * 60):
-        self.db_path = Path(db_path)
+    def __init__(self, database_url, secret_key, token_max_age=7 * 24 * 60 * 60):
+        if not database_url:
+            raise RuntimeError(
+                "DATABASE_URL is required. Example: "
+                "mysql+pymysql://sework:password@127.0.0.1:3306/sework"
+            )
+        if not database_url.startswith(("mysql://", "mysql+pymysql://")):
+            raise RuntimeError("DATABASE_URL must use mysql:// or mysql+pymysql://")
+
+        self.database_url = database_url
         self.secret_key = secret_key
         self.token_max_age = token_max_age
         self.serializer = URLSafeTimedSerializer(secret_key)
 
     def init_db(self):
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT NOT NULL UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('user', 'admin')),
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    username VARCHAR(32) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL,
+                    role VARCHAR(16) NOT NULL,
+                    is_active TINYINT(1) NOT NULL DEFAULT 1,
+                    created_at VARCHAR(40) NOT NULL,
+                    updated_at VARCHAR(40) NOT NULL,
+                    CHECK (role IN ('user', 'admin'))
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_indexes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    index_name TEXT NOT NULL,
-                    collection_name TEXT NOT NULL UNIQUE,
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    index_name VARCHAR(64) NOT NULL,
+                    collection_name VARCHAR(128) NOT NULL UNIQUE,
                     data_path TEXT NOT NULL,
-                    source_format TEXT,
-                    cell_count INTEGER,
-                    gene_count INTEGER,
-                    vector_dim INTEGER,
-                    embedding_key TEXT,
-                    metadata_keys TEXT NOT NULL DEFAULT '[]',
-                    hnsw_params TEXT NOT NULL DEFAULT '{}',
-                    search_params TEXT NOT NULL DEFAULT '{}',
-                    build_time_ms REAL,
-                    is_active INTEGER NOT NULL DEFAULT 0,
-                    status TEXT NOT NULL DEFAULT 'ready',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    UNIQUE(user_id, index_name),
-                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-                )
+                    source_format VARCHAR(32),
+                    cell_count INT,
+                    gene_count INT,
+                    vector_dim INT,
+                    embedding_key VARCHAR(128),
+                    metadata_keys JSON NOT NULL,
+                    hnsw_params JSON NOT NULL,
+                    search_params JSON NOT NULL,
+                    build_time_ms DOUBLE,
+                    is_active TINYINT(1) NOT NULL DEFAULT 0,
+                    status VARCHAR(32) NOT NULL DEFAULT 'ready',
+                    created_at VARCHAR(40) NOT NULL,
+                    updated_at VARCHAR(40) NOT NULL,
+                    UNIQUE KEY uq_user_index_name (user_id, index_name),
+                    CONSTRAINT fk_user_indexes_user
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                        ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
 
@@ -85,7 +130,7 @@ class UserStore:
                     (username, password_hash, role, now, now),
                 )
                 user_id = cursor.lastrowid
-        except sqlite3.IntegrityError as exc:
+        except pymysql.err.IntegrityError as exc:
             raise AuthError("username already exists") from exc
 
         return self.get_user(user_id)
@@ -342,7 +387,7 @@ class UserStore:
                     ),
                 )
                 index_id = cursor.lastrowid
-        except sqlite3.IntegrityError as exc:
+        except pymysql.err.IntegrityError as exc:
             raise AuthError("index name already exists for this user") from exc
 
         return self.get_user_index(user_id, index_id)
@@ -367,10 +412,7 @@ class UserStore:
         return self.get_user_index(user_id, index_id)
 
     def _connect(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+        return _MySQLConnection(self.database_url)
 
     def _normalize_username(self, username):
         username = (username or "").strip()

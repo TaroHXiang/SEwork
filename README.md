@@ -1,15 +1,16 @@
-# 单细胞相似性检索系统
+﻿# 单细胞相似性检索系统
 
-软件工程小组大作业项目：读取单细胞数据，提取细胞向量，构建 HNSW ANN 索引，按细胞 ID 或向量查询 Top-K 相似细胞，并在 Web 页面展示结果。
+软件工程小组大作业项目。系统读取单细胞数据集，提取细胞向量，使用 Qdrant/HNSW 构建近似最近邻索引，支持按细胞 ID 或向量进行 Top-K 相似细胞检索，并通过 Web 页面展示数据集、UMAP、检索结果和用户管理功能。
 
 ## 技术栈
 
 - 后端：Python + Flask
-- 前端：HTML + CSS + JavaScript + Bootstrap
-- 数据读取：scanpy / anndata
-- 向量处理：numpy / pandas
-- ANN 检索：Qdrant，底层使用 HNSW 图索引
-- 版本管理：Git + GitHub
+- 前端：HTML + CSS + JavaScript
+- 用户与历史索引元数据：MySQL
+- 向量数据库：Qdrant，底层使用 HNSW 索引
+- 数据读取：scanpy / anndata / pandas
+- 向量处理：numpy
+- 部署辅助：Docker Desktop + Docker Compose
 
 ## 项目结构
 
@@ -19,11 +20,9 @@
 ├── config.py
 ├── requirements.txt
 ├── docker-compose.yml
-├── 数据说明.md
-├── 前端依赖接口清单.md
+├── .env.example
 ├── data/
-│   ├── sample_cells.csv
-│   └── users.db
+│   └── sample_cells.csv
 ├── services/
 │   ├── auth_service.py
 │   ├── data_loader.py
@@ -35,237 +34,274 @@
     └── index.html
 ```
 
-## 启动方式
+## 环境准备
 
-### 1. 创建虚拟环境并安装依赖
+### 1. 安装 Docker Desktop
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+Windows 上建议安装 Docker Desktop：
+
+```text
+https://www.docker.com/products/docker-desktop/
 ```
 
-### 2. 启动 Qdrant
+下载并安装 **Docker Desktop for Windows**。安装完成后启动 Docker Desktop，等待界面显示 Docker Engine 正在运行。
 
-```bash
+在 PowerShell 中检查：
+
+```powershell
+docker --version
+docker compose version
+```
+
+能看到版本号说明 Docker 命令可用。
+
+### 2. 启动 MySQL 和 Qdrant
+
+进入项目目录：
+
+```powershell
+cd D:\softwareEgeneering\SEwork
+```
+
+启动服务：
+
+```powershell
 docker compose up -d
 ```
 
-如果本机暂时没有 Docker，系统会自动使用内存模式的 Qdrant 客户端，便于中期答辩演示。内存模式在服务重启后需要重新构建索引。
+查看容器状态：
 
-若要显式连接 Docker 中运行的 Qdrant 服务，可设置环境变量：
-
-```bash
-set QDRANT_URL=http://127.0.0.1:6333
+```powershell
+docker ps
 ```
 
-### 3. 启动 Flask 服务
+正常情况下应该看到：
 
-```bash
+```text
+ann-mysql
+ann-qdrant
+```
+
+### 3. 配置 .env
+
+创建 `.env` 文件：
+
+```env
+DATABASE_URL=mysql+pymysql://sework:sework123@127.0.0.1:3306/sework
+QDRANT_URL=http://127.0.0.1:6333
+SECRET_KEY=change-this-secret
+```
+
+说明：
+
+- `DATABASE_URL`：Flask 连接 MySQL 的地址，用于保存用户、管理员和历史索引记录。
+- `QDRANT_URL`：Flask 连接 Qdrant 的地址，用于保存和查询向量索引。
+- `SECRET_KEY`：Token 签名密钥，正式部署时应改成更复杂的随机字符串。
+
+### 4. 安装 Python 依赖
+
+```powershell
+pip install -r requirements.txt
+```
+
+### 5. 启动 Flask
+
+```powershell
 python app.py
 ```
 
-### 4. 打开页面
+浏览器打开：
 
 ```text
 http://127.0.0.1:5000
 ```
 
-## 页面说明
+首次启动时，后端会自动在 MySQL 中创建：
 
-系统前端采用单页应用 (SPA) 模式，分为**登录注册页**和**主控台**。
-
-### 1. 登录注册页
-
-- 刚进入系统时，若未携带有效凭证，将展示居中的登录注册卡片。
-- 支持注册普通用户或管理员。
-- 登录成功后，系统会自动保存 Token 并跳转至主控台。
-
-### 2. 主控台 - 顶部状态区
-
-- 左侧：展示系统名称与当前索引状态徽标。
-- 右侧：包含“帮助文档”链接、当前登录用户名、以及“退出登录”按钮。
-
-### 3. 主控台 - 左侧：数据集与索引区
-
-- 输入数据文件路径。
-- 点击“检查数据”后展示数据集摘要信息（细胞数、基因数、维度等）。
-- 点击“构建索引”后触发向量加载与 HNSW 索引构建。
-- 面板底部实时显示状态提示与耗时。
-
-### 4. 主控台 - 右侧：相似细胞查询区
-
-- 支持两种查询方式：
-  - 按细胞 ID 查询
-  - 按向量查询
-- 支持 `cell_type`、`disease`、`AgeGroup` 三类过滤条件。
-- 支持自定义 `Top-K` 查询数量。
-- 点击“开始查询”后向后端发起检索请求。
-
-### 5. 主控台 - 下方：结果展示区
-
-- 以表格形式展示 Top-K 相似细胞列表。
-- 当前展示字段包括：排名、细胞编号、距离、相似度、细胞类型、疾病、年龄组、性别。
-- 查询无结果时展示空状态，失败时展示红色错误提示。
-
-## 接口说明
-
-前端联调详细约定见 `前端依赖接口清单.md`。下面列出当前页面直接依赖的主要接口。
-
-### 1. 健康检查
-
-```http
-GET /api/health
+```text
+users
+user_indexes
 ```
 
-用途：
+## 数据库查看
 
-- 获取服务运行状态
-- 判断索引是否已经构建
-- 获取当前数据集摘要
+### 查看 MySQL 表
 
-返回示例：
+进入 MySQL：
 
-```json
-{
-  "status": "ok",
-  "indexed": false,
-  "dataset": null
-}
+```powershell
+docker exec -it ann-mysql mysql -usework -psework123 sework
 ```
 
-### 2. 数据集检查
+查看表：
 
-```http
-POST /api/dataset/inspect
-Content-Type: application/json
-
-{
-  "data_path": "liver.h5ad"
-}
+```sql
+SHOW TABLES;
 ```
 
-用途：
+查看用户：
 
-- 检查数据文件能否正常读取
-- 获取细胞数、基因数、向量维度、向量来源等信息
-
-### 3. 构建索引
-
-```http
-POST /api/index/build
-Content-Type: application/json
-
-{
-  "data_path": "liver.h5ad"
-}
+```sql
+SELECT id, username, role, is_active, created_at FROM users;
 ```
 
-说明：
+查看历史索引：
 
-- `data_path` 可填写 CSV 或 h5ad 文件路径。
-- 不传时默认加载示例数据。
-
-返回示例：
-
-```json
-{
-  "message": "index built",
-  "collection": "cell_vectors",
-  "cell_count": 1000,
-  "gene_count": 2000,
-  "vector_dim": 30,
-  "embedding_key": "X_pca",
-  "build_time_ms": 1234.56
-}
+```sql
+SELECT id, user_id, index_name, collection_name, data_path, is_active, status FROM user_indexes;
 ```
 
-### 4. 按细胞 ID 查询
+退出：
 
-```http
-POST /api/search/by-id
-Content-Type: application/json
-
-{
-  "cell_id": "AAACCTGAGCAGGTCA-1_2",
-  "top_k": 10,
-  "filters": {
-    "cell_type": "T cell",
-    "disease": "healthy",
-    "AgeGroup": "adult"
-  }
-}
+```sql
+exit;
 ```
 
-返回字段：
+也可以直接执行：
 
-- `query`
-- `query_time_ms`
-- `results`
-
-### 5. 按向量查询
-
-```http
-POST /api/search/by-vector
-Content-Type: application/json
-
-{
-  "vector": [0.12, 0.34, 0.56],
-  "top_k": 10,
-  "filters": {}
-}
+```powershell
+docker exec -it ann-mysql mysql -usework -psework123 sework -e "SHOW TABLES;"
 ```
 
-返回字段：
+### 查看 Qdrant
 
-- `query`
-- `query_time_ms`
-- `results`
+浏览器打开：
 
-### 6. 用户认证相关
+```text
+http://127.0.0.1:6333/dashboard
+```
+
+或使用接口：
+
+```powershell
+curl http://127.0.0.1:6333/collections
+```
+
+构建索引成功后，Qdrant 中会出现对应 collection。
+
+## 使用流程
+
+1. 打开 `http://127.0.0.1:5000`。
+2. 注册用户，可选择普通用户或管理员。
+3. 登录系统。
+4. 在数据集入口输入：
+
+```text
+data/sample_cells.csv
+```
+
+5. 进入核心页面后点击“检查数据”。
+6. 点击“构建索引”。
+7. 索引构建完成后，可以按细胞 ID 或向量进行 Top-K 检索。
+8. 管理员账号可以进行用户管理。
+9. 已构建的索引会记录到 MySQL 的 `user_indexes` 表中，下次登录可从历史索引进入，不必重复构建。
+
+## 数据说明
+
+当前项目自带样例数据：
+
+```text
+data/sample_cells.csv
+```
+
+如果使用真实 `.h5ad` 数据，可以放到：
+
+```text
+data/liver.h5ad
+```
+
+页面中填写：
+
+```text
+data/liver.h5ad
+```
+
+`.h5ad` 数据要求：
+
+- 优先使用 `adata.obsm["X_pca"]` 作为检索向量。
+- 可使用 `adata.obsm["X_umap"]` 作为 UMAP 可视化坐标。
+- 常用元数据字段包括 `cell_type`、`disease`、`AgeGroup`、`sex` 等。
+
+## 主要接口
+
+### 认证接口
 
 ```http
 POST /api/auth/register
 POST /api/auth/login
-GET /api/auth/me
+GET  /api/auth/me
 ```
 
-用途：
+登录成功后，前端使用 Bearer Token 调用需要认证的接口。
 
-- 注册普通用户或管理员
-- 登录并获取 Bearer Token
-- 获取当前登录用户信息
-
-### 7. 管理员用户管理
+### 管理员接口
 
 ```http
-GET /api/admin/users
-POST /api/admin/users
-PATCH /api/admin/users/<user_id>
+GET    /api/admin/users
+POST   /api/admin/users
+PATCH  /api/admin/users/<user_id>
 DELETE /api/admin/users/<user_id>
 ```
 
-用途：
+用于查看、新增、修改和删除用户。
 
-- 查看用户列表
-- 新增用户
-- 修改用户角色或状态
-- 删除指定用户
+### 数据集接口
 
-## 前端协作说明
+```http
+POST /api/dataset/inspect
+GET  /api/dataset/umap-preview
+GET  /api/dataset/metadata-options
+```
 
-- 前端负责文件：
-  - `templates/index.html`
-  - `static/app.js`
-  - `static/styles.css`
-  - `README.md`
-- 前端通过 API 与后端协作，不直接依赖 `services/` 内部实现。
-- 联调时若接口字段发生变更，应优先同步 `前端依赖接口清单.md`。
+用于检查数据集、读取 UMAP 预览和获取元数据筛选项。
 
-## 后续扩展
+### 索引接口
 
-- 接入真实单细胞数据集，统一细胞 ID、向量列和元数据字段。
-- 增加 PCA、归一化、标准化等向量预处理流程。
-- 在页面增加数据上传、索引状态、可视化图表和 UMAP 展示。
-- 补充单元测试和接口测试。
-- 将项目推送到 GitHub，使用分支和 Pull Request 管理协作。
+```http
+POST /api/index/build
+GET  /api/index/build/jobs/<job_id>
+GET  /api/indexes
+GET  /api/indexes/active
+POST /api/indexes/<index_id>/activate
+```
+
+用于构建索引、查看构建进度、查看历史索引和激活历史索引。
+
+### 检索接口
+
+```http
+POST /api/search/by-id
+POST /api/search/by-vector
+POST /api/search/evaluate/by-id
+POST /api/search/evaluate/by-vector
+```
+
+用于执行 Top-K 相似细胞检索和性能评估。
+
+### data file not found
+
+如果页面提示：
+
+```text
+data file not found
+```
+
+说明页面填写的数据路径不存在。可以先使用：
+
+```text
+data/sample_cells.csv
+```
+
+如果使用真实数据，需要把文件放到项目的 `data/` 目录下。
+
+## 存储说明
+
+当前系统使用：
+
+```text
+MySQL：保存用户、管理员、历史索引元数据
+Qdrant：保存向量索引和 HNSW 检索数据
+data/：保存 CSV 或 h5ad 数据集文件
+```
+
+相比早期本地 SQLite 和本地 Qdrant 目录，MySQL + Qdrant 服务更接近真实部署环境，支持更好的数据管理、服务解耦和后续扩展。
