@@ -1,4 +1,18 @@
 services:
+  mysql:
+    image: mysql:8.4
+    container_name: ann-mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: sework
+      MYSQL_USER: sework
+      MYSQL_PASSWORD: sework123
+      MYSQL_ROOT_PASSWORD: root123
+    volumes:
+      - mysql_data:/var/lib/mysql
+
   qdrant:
     image: qdrant/qdrant:v1.9.2
     container_name: ann-qdrant
@@ -13,4 +27,5 @@ services:
       - qdrant_storage:/qdrant/storage
 
 volumes:
+  mysql_data:
   qdrant_storage:

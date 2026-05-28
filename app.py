@@ -7,9 +7,17 @@ from time import perf_counter
 from threading import Lock, Thread
 from uuid import uuid4
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, g, jsonify, render_template, request
 
-from config import DEFAULT_SAMPLE_DATA, SECRET_KEY, USER_DB_PATH
+from config import (
+    API_METADATA_VALUES_MAX,
+    API_TOP_K_MAX,
+    API_UMAP_LIMIT_MAX,
+    DATABASE_URL,
+    DEFAULT_SAMPLE_DATA,
+    MAX_INDEX_BUILD_JOBS,
+    SECRET_KEY,
+)
 from services.auth_service import AuthError, UserStore
 from services.data_loader import (
     DEFAULT_METADATA_FILTER_FIELDS,
@@ -24,11 +32,70 @@ from services.vector_index import CellVectorIndex, build_collection_name
 app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET_KEY
 index = CellVectorIndex()
-user_store = UserStore(USER_DB_PATH, SECRET_KEY)
+user_store = UserStore(DATABASE_URL, SECRET_KEY)
 user_store.init_db()
 INDEX_BUILD_JOBS: dict[str, dict] = {}
 INDEX_BUILD_JOBS_LOCK = Lock()
-MAX_INDEX_BUILD_JOBS = 200
+
+
+@app.before_request
+def mark_request_start():
+    g.request_start_time = perf_counter()
+    g.request_id = request.headers.get("X-Request-Id") or uuid4().hex[:12]
+
+
+@app.after_request
+def add_timing_headers(response):
+    if hasattr(g, "request_start_time"):
+        response.headers["X-Request-Time-Ms"] = str(_elapsed_ms(g.request_start_time))
+    if hasattr(g, "request_id"):
+        response.headers["X-Request-Id"] = g.request_id
+    return response
+
+
+@app.errorhandler(404)
+def not_found(_exc):
+    return _api_error("endpoint not found", 404, code="not_found")
+
+
+@app.errorhandler(405)
+def method_not_allowed(_exc):
+    return _api_error("method not allowed", 405, code="method_not_allowed")
+
+
+@app.errorhandler(Exception)
+def unhandled_exception(exc):
+    app.logger.exception("Unhandled API error")
+    return _api_error(str(exc), 500, code="internal_error")
+
+
+def _elapsed_ms(start_time: float) -> float:
+    return round((perf_counter() - start_time) * 1000, 2)
+
+
+def _api_error(message: str, status_code: int = 400, *, code: str | None = None, **extra):
+    payload = {
+        "ok": False,
+        "error": message,
+        "code": code or "request_error",
+        "timestamp": _utc_now_iso(),
+    }
+    if hasattr(g, "request_id"):
+        payload["request_id"] = g.request_id
+    if hasattr(g, "request_start_time"):
+        payload["request_time_ms"] = _elapsed_ms(g.request_start_time)
+    payload.update(extra)
+    return jsonify(payload), status_code
+
+
+def _api_ok(payload: dict | None = None, status_code: int = 200):
+    payload = dict(payload or {})
+    payload.setdefault("ok", True)
+    if hasattr(g, "request_id"):
+        payload.setdefault("request_id", g.request_id)
+    if hasattr(g, "request_start_time"):
+        payload.setdefault("request_time_ms", _elapsed_ms(g.request_start_time))
+    return jsonify(payload), status_code
 
 
 def _get_bearer_token():
@@ -53,8 +120,8 @@ def _parse_top_k(raw_value, default=5):
         top_k = int(raw_value if raw_value is not None else default)
     except Exception as exc:
         raise ValueError("top_k must be an integer") from exc
-    if top_k < 1 or top_k > 100:
-        raise ValueError("top_k must be between 1 and 100")
+    if top_k < 1 or top_k > API_TOP_K_MAX:
+        raise ValueError(f"top_k must be between 1 and {API_TOP_K_MAX}")
     return top_k
 
 
