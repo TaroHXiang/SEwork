@@ -109,6 +109,76 @@ class UserStore:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS index_build_jobs (
+                    job_id VARCHAR(64) NOT NULL PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    data_path TEXT NOT NULL,
+                    index_name VARCHAR(64) NOT NULL,
+                    hnsw_params JSON NOT NULL,
+                    search_params JSON NOT NULL,
+                    activate TINYINT(1) NOT NULL DEFAULT 1,
+                    status VARCHAR(32) NOT NULL,
+                    stage VARCHAR(64) NOT NULL,
+                    message TEXT,
+                    progress_pct DOUBLE NOT NULL DEFAULT 0,
+                    processed_cells INT NOT NULL DEFAULT 0,
+                    total_cells INT NULL,
+                    elapsed_seconds DOUBLE NOT NULL DEFAULT 0,
+                    rate_cells_per_second DOUBLE NULL,
+                    eta_seconds DOUBLE NULL,
+                    dataset_summary JSON NULL,
+                    history JSON NOT NULL,
+                    result_json JSON NULL,
+                    error_text TEXT NULL,
+                    created_at VARCHAR(40) NOT NULL,
+                    updated_at VARCHAR(40) NOT NULL,
+                    started_at VARCHAR(40) NULL,
+                    finished_at VARCHAR(40) NULL,
+                    INDEX idx_build_jobs_user_status (user_id, status, updated_at),
+                    CONSTRAINT fk_build_jobs_user
+                        FOREIGN KEY (user_id) REFERENCES users(id)
+                        ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+
+    def mark_unfinished_build_jobs_failed(self, reason="service restarted before task finished"):
+        now = self._now()
+        history_item = {"time": now, "stage": "failed", "text": reason}
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT job_id, history
+                FROM index_build_jobs
+                WHERE status IN ('queued', 'running')
+                """
+            ).fetchall()
+            for row in rows:
+                history = json.loads(row.get("history") or "[]")
+                history.append(history_item)
+                conn.execute(
+                    """
+                    UPDATE index_build_jobs
+                    SET status = 'failed',
+                        stage = 'failed',
+                        message = ?,
+                        error_text = ?,
+                        finished_at = ?,
+                        updated_at = ?,
+                        history = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        reason,
+                        reason,
+                        now,
+                        now,
+                        json.dumps(history[-12:], ensure_ascii=False),
+                        row["job_id"],
+                    ),
+                )
 
     def register(self, username, password, role="user", admin_key=None, expected_admin_key=None):
         username = self._normalize_username(username)
@@ -411,6 +481,153 @@ class UserStore:
             )
         return self.get_user_index(user_id, index_id)
 
+    def find_reusable_user_index(self, user_id, data_path, hnsw_params=None, search_params=None):
+        normalized_path = str(data_path or "").strip()
+        target_hnsw = json.dumps(hnsw_params or {}, ensure_ascii=False, sort_keys=True)
+        target_search = json.dumps(search_params or {}, ensure_ascii=False, sort_keys=True)
+        indexes = self.list_user_indexes(user_id)
+        for item in indexes:
+            if item["status"] != "ready":
+                continue
+            if str(item.get("data_path") or "").strip() != normalized_path:
+                continue
+            item_hnsw = json.dumps(item.get("hnsw_params") or {}, ensure_ascii=False, sort_keys=True)
+            item_search = json.dumps(item.get("search_params") or {}, ensure_ascii=False, sort_keys=True)
+            if item_hnsw == target_hnsw and item_search == target_search:
+                return item
+        return None
+
+    def get_latest_running_build_job(self, user_id, data_path=None):
+        query = """
+            SELECT *
+            FROM index_build_jobs
+            WHERE user_id = ? AND status IN ('queued', 'running')
+        """
+        params = [user_id]
+        if data_path is not None:
+            query += " AND data_path = ?"
+            params.append(str(data_path))
+        query += " ORDER BY updated_at DESC, created_at DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(query, params).fetchone()
+        return self._row_to_build_job(row) if row else None
+
+    def create_index_build_job(
+        self,
+        *,
+        job_id,
+        user_id,
+        data_path,
+        index_name,
+        hnsw_params,
+        search_params,
+        activate,
+        status,
+        stage,
+        message,
+        progress_pct,
+        processed_cells,
+        total_cells,
+        elapsed_seconds,
+        rate_cells_per_second,
+        eta_seconds,
+        dataset_summary,
+        history,
+        result,
+        error,
+        created_at,
+        updated_at,
+        started_at,
+        finished_at,
+    ):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO index_build_jobs (
+                    job_id, user_id, data_path, index_name, hnsw_params, search_params,
+                    activate, status, stage, message, progress_pct, processed_cells, total_cells,
+                    elapsed_seconds, rate_cells_per_second, eta_seconds, dataset_summary, history,
+                    result_json, error_text, created_at, updated_at, started_at, finished_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id,
+                    user_id,
+                    str(data_path),
+                    index_name,
+                    json.dumps(hnsw_params or {}, ensure_ascii=False),
+                    json.dumps(search_params or {}, ensure_ascii=False),
+                    1 if bool(activate) else 0,
+                    status,
+                    stage,
+                    message,
+                    float(progress_pct or 0),
+                    int(processed_cells or 0),
+                    int(total_cells) if total_cells is not None else None,
+                    float(elapsed_seconds or 0),
+                    float(rate_cells_per_second) if rate_cells_per_second is not None else None,
+                    float(eta_seconds) if eta_seconds is not None else None,
+                    json.dumps(dataset_summary, ensure_ascii=False) if dataset_summary is not None else None,
+                    json.dumps(history or [], ensure_ascii=False),
+                    json.dumps(result, ensure_ascii=False) if result is not None else None,
+                    error,
+                    created_at,
+                    updated_at,
+                    started_at,
+                    finished_at,
+                ),
+            )
+        return self.get_index_build_job(job_id)
+
+    def update_index_build_job(self, job_id, **fields):
+        if not fields:
+            return self.get_index_build_job(job_id)
+
+        updates = []
+        values = []
+        json_fields = {
+            "hnsw_params",
+            "search_params",
+            "dataset_summary",
+            "history",
+            "result_json",
+        }
+        renamed = {"result": "result_json", "error": "error_text"}
+
+        for raw_key, raw_value in fields.items():
+            key = renamed.get(raw_key, raw_key)
+            if key in json_fields:
+                updates.append(f"{key} = ?")
+                values.append(json.dumps(raw_value, ensure_ascii=False) if raw_value is not None else None)
+            else:
+                updates.append(f"{key} = ?")
+                values.append(raw_value)
+
+        if "updated_at" not in fields:
+            updates.append("updated_at = ?")
+            values.append(self._now())
+
+        values.append(job_id)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE index_build_jobs SET {', '.join(updates)} WHERE job_id = ?",
+                values,
+            )
+        return self.get_index_build_job(job_id)
+
+    def get_index_build_job(self, job_id):
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT *
+                FROM index_build_jobs
+                WHERE job_id = ?
+                """,
+                (job_id,),
+            ).fetchone()
+        return self._row_to_build_job(row) if row else None
+
     def _connect(self):
         return _MySQLConnection(self.database_url)
 
@@ -446,6 +663,27 @@ class UserStore:
         item["metadata_keys"] = json.loads(item.get("metadata_keys") or "[]")
         item["hnsw_params"] = json.loads(item.get("hnsw_params") or "{}")
         item["search_params"] = json.loads(item.get("search_params") or "{}")
+        return item
+
+    def _row_to_build_job(self, row):
+        item = dict(row)
+        item["activate"] = bool(item.get("activate"))
+        item["progress_pct"] = float(item.get("progress_pct") or 0)
+        item["processed_cells"] = int(item.get("processed_cells") or 0)
+        item["total_cells"] = int(item["total_cells"]) if item.get("total_cells") is not None else None
+        item["elapsed_seconds"] = float(item.get("elapsed_seconds") or 0)
+        item["rate_cells_per_second"] = (
+            float(item["rate_cells_per_second"]) if item.get("rate_cells_per_second") is not None else None
+        )
+        item["eta_seconds"] = float(item["eta_seconds"]) if item.get("eta_seconds") is not None else None
+        item["hnsw_params"] = json.loads(item.get("hnsw_params") or "{}")
+        item["search_params"] = json.loads(item.get("search_params") or "{}")
+        item["dataset_summary"] = json.loads(item.get("dataset_summary") or "null")
+        item["history"] = json.loads(item.get("history") or "[]")
+        item["result"] = json.loads(item.get("result_json") or "null")
+        item["error"] = item.get("error_text")
+        item.pop("result_json", None)
+        item.pop("error_text", None)
         return item
 
     def _now(self):

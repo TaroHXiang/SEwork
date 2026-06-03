@@ -4,12 +4,23 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>单细胞相似性检索系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
   <body>
+    <div class="site-ambience" aria-hidden="true">
+      <span class="ambient-orb orb-cyan"></span>
+      <span class="ambient-orb orb-blue"></span>
+      <span class="ambient-orb orb-gold"></span>
+      <span class="ambient-grid"></span>
+      <span class="ambient-noise"></span>
+    </div>
     <div id="authView" class="auth-wrapper">
       <div class="auth-card">
+        <p class="auth-kicker">Single-Cell Similarity Retrieval Workspace</p>
         <h2 class="auth-title">系统登录</h2>
         <p class="auth-subtitle">登录后访问单细胞相似性检索控制台</p>
 
@@ -24,25 +35,23 @@
         </div>
 
         <div class="auth-form-group mb-4">
-          <label class="form-label d-block">注册身份（仅注册时生效）</label>
-          <div class="btn-group w-100" role="group">
-            <input type="radio" class="btn-check" name="authRole" id="roleUser" value="user" checked>
-            <label class="btn btn-outline-secondary action-btn" for="roleUser">普通用户</label>
-            <input type="radio" class="btn-check" name="authRole" id="roleAdmin" value="admin">
-            <label class="btn btn-outline-secondary action-btn" for="roleAdmin">管理员</label>
+          <label class="form-label d-block">注册说明</label>
+          <div class="status-message neutral-message mb-0">
+            当前页面仅开放普通用户注册。管理员账号由项目团队统一创建与分发，不提供自助注册入口。
           </div>
         </div>
 
         <div id="authMessage" class="status-message neutral-message d-none mb-3"></div>
 
         <div class="auth-actions">
-          <button id="loginBtn" class="btn btn-primary action-btn primary-btn flex-fill">登录</button>
-          <button id="registerBtn" class="btn btn-outline-light action-btn secondary-btn flex-fill">注册</button>
+          <button id="loginBtn" type="button" onclick="window.__seworkLogin && window.__seworkLogin()" class="btn btn-primary action-btn primary-btn flex-fill">登录</button>
+          <button id="registerBtn" type="button" onclick="window.__seworkRegister && window.__seworkRegister()" class="btn btn-outline-light action-btn secondary-btn flex-fill">注册</button>
         </div>
+        <p class="auth-footnote">面向单细胞数据读取、ANN 索引构建、相似检索与结果可视化的一体化工作台。</p>
       </div>
     </div>
 
-    <div id="hubView" class="app-shell d-none">
+    <div id="hubView" class="app-shell d-none" hidden>
       <header class="topbar">
         <div class="topbar-copy">
           <h1 class="page-title">单细胞相似性检索系统</h1>
@@ -52,8 +61,9 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <span id="hubAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
           <span id="hubCurrentUserLabel" class="user-label">--</span>
-          <button id="hubLogoutBtn" class="btn action-btn secondary-btn btn-sm">退出登录</button>
+          <button id="hubLogoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
         </div>
       </header>
 
@@ -78,15 +88,98 @@
               <input id="hubDataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
             </div>
             <div class="action-row">
-              <button id="openNewDatasetBtn" class="btn btn-primary action-btn primary-btn">进入核心页面</button>
+              <button id="openNewDatasetBtn" type="button" class="btn btn-primary action-btn primary-btn">进入核心页面</button>
             </div>
           </div>
           <div id="hubNewDatasetMessage" class="status-message neutral-message">支持先预览 UMAP，再构建索引。</div>
         </section>
+
+        <section id="adminPanelSection" class="panel admin-panel d-none" hidden>
+          <div class="panel-heading">
+            <h2 class="panel-title">系统管理</h2>
+            <p class="panel-description">管理员可统一查看账号状态，创建用户并执行基础账号管理操作。</p>
+          </div>
+
+          <div class="admin-summary-grid">
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">用户总数</span>
+              <strong id="adminUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">启用账号</span>
+              <strong id="adminActiveUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">管理员数量</span>
+              <strong id="adminAdminCount" class="admin-summary-value">0</strong>
+            </article>
+          </div>
+
+          <div class="admin-grid">
+            <section class="subpanel admin-create-panel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">创建用户</h3>
+                <span class="subpanel-tag">Admin</span>
+              </div>
+              <div class="admin-form-grid">
+                <div>
+                  <label class="form-label" for="adminCreateUsername">账号</label>
+                  <input id="adminCreateUsername" class="form-control dashboard-input" placeholder="请输入新账号">
+                </div>
+                <div>
+                  <label class="form-label" for="adminCreatePassword">密码</label>
+                  <input id="adminCreatePassword" type="password" class="form-control dashboard-input" placeholder="至少 6 位">
+                </div>
+                <div>
+                  <label class="form-label" for="adminCreateRole">角色</label>
+                  <select id="adminCreateRole" class="form-select dashboard-input">
+                    <option value="user">普通用户</option>
+                    <option value="admin">管理员</option>
+                  </select>
+                </div>
+                <div class="admin-create-submit">
+                  <button id="adminCreateUserBtn" type="button" class="btn btn-primary action-btn primary-btn w-100">创建用户</button>
+                </div>
+              </div>
+              <div id="adminMessage" class="status-message neutral-message">管理员可在此创建普通用户或团队内部管理员账号。</div>
+            </section>
+
+            <section class="subpanel admin-users-panel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">用户管理</h3>
+                <div class="admin-panel-actions">
+                  <span id="adminUsersHint" class="subpanel-tag">同步中</span>
+                  <button id="adminRefreshUsersBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新列表</button>
+                </div>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>账号</th>
+                        <th>角色</th>
+                        <th>状态</th>
+                        <th>创建时间</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminUsersBody">
+                      <tr>
+                        <td colspan="6" class="table-state">管理员列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
       </main>
     </div>
 
-    <div id="mainView" class="app-shell d-none">
+    <div id="mainView" class="app-shell d-none" hidden>
       <header class="topbar">
         <div class="topbar-copy">
           <h1 class="page-title">单细胞相似性检索系统</h1>
@@ -96,11 +189,12 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <button id="backToHubBtn" class="btn action-btn secondary-btn btn-sm">返回历史页</button>
+          <span id="mainAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
+          <button id="backToHubBtn" type="button" class="btn action-btn secondary-btn btn-sm">返回历史页</button>
           <span id="currentDatasetLabel" class="user-label">--</span>
           <a href="https://github.com" target="_blank" class="action-link">帮助文档</a>
           <span id="currentUserLabel" class="user-label">--</span>
-          <button id="logoutBtn" class="btn action-btn secondary-btn btn-sm">退出登录</button>
+          <button id="logoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
         </div>
       </header>
 
@@ -118,13 +212,17 @@
                 <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
               </div>
               <div class="action-row">
-                <button id="inspectDataBtn" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
-                <button id="buildIndexBtn" class="btn btn-primary action-btn primary-btn">构建索引</button>
+                <button id="inspectDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
+                <button id="buildIndexBtn" type="button" class="btn btn-primary action-btn primary-btn">构建索引</button>
               </div>
             </div>
 
             <div id="indexStatus" class="status-message neutral-message">等待构建</div>
             <div id="indexBuildProgress" class="index-build-progress d-none" aria-live="polite">
+              <div class="index-progress-header-row">
+                <strong id="indexBuildStageLabel" class="index-progress-stage">等待任务启动</strong>
+                <span id="indexBuildElapsed" class="index-progress-elapsed">已耗时 --</span>
+              </div>
               <div class="progress index-progress-shell">
                 <div
                   id="indexBuildProgressBar"
@@ -134,6 +232,31 @@
                 >0%</div>
               </div>
               <div id="indexBuildProgressMeta" class="index-progress-meta"></div>
+              <div class="index-progress-stats">
+                <div class="progress-stat-card">
+                  <span class="progress-stat-label">已处理</span>
+                  <strong id="indexBuildProcessed">0 / --</strong>
+                </div>
+                <div class="progress-stat-card">
+                  <span class="progress-stat-label">处理速度</span>
+                  <strong id="indexBuildRate">--</strong>
+                </div>
+                <div class="progress-stat-card">
+                  <span class="progress-stat-label">预计剩余</span>
+                  <strong id="indexBuildEta">--</strong>
+                </div>
+              </div>
+              <div class="index-progress-timeline">
+                <div class="index-progress-timeline-title">构建过程</div>
+                <ul id="indexBuildTimeline" class="build-timeline">
+                  <li class="build-timeline-item">
+                    <span class="build-timeline-dot"></span>
+                    <div>
+                      <div class="build-timeline-text">任务尚未开始</div>
+                    </div>
+                  </li>
+                </ul>
+              </div>
             </div>
 
             <section class="subpanel mt-4">
@@ -220,7 +343,7 @@
                     <input id="topKId" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
                   </div>
                   <div class="query-submit-cell">
-                    <button id="searchByIdBtn" class="btn action-btn dark-btn w-100">开始查询</button>
+                    <button id="searchByIdBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>
                   </div>
                 </div>
               </div>
@@ -236,7 +359,7 @@
                     <input id="topKVector" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
                   </div>
                   <div class="query-submit-cell">
-                    <button id="searchByVectorBtn" class="btn action-btn dark-btn w-100">开始查询</button>
+                    <button id="searchByVectorBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>
                   </div>
                 </div>
               </div>
@@ -251,45 +374,160 @@
           <div class="results-header">
             <div>
               <h2 class="panel-title mb-1">结果展示区</h2>
-              <p class="panel-description">上方为全量细胞 UMAP 分布，下方为 Top-K 检索结果。</p>
+              <p class="panel-description">围绕 UMAP 预览、统计分布和 Top-K 检索结果构建统一分析工作区。</p>
             </div>
           </div>
 
-          <div class="viz-grid">
-            <section class="viz-card">
-              <div class="viz-card-header">
-                <div>
-                  <h3 class="viz-title">UMAP 散点分布</h3>
-                  <p class="viz-description">先展示数据集坐标，查询后高亮命中细胞。</p>
-                </div>
-                <div class="viz-right-actions">
-                  <div id="umapLegend" class="viz-legend">等待加载</div>
-                  <button id="resetUmapBtn" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
-                </div>
-              </div>
-              <div id="umapChart" class="umap-chart" aria-label="UMAP 散点图"></div>
-            </section>
+          <div id="datasetOverviewStrip" class="dataset-overview-strip">
+            <button type="button" class="overview-chip" data-overview-key="dataset_name">
+              <span class="overview-chip-label">数据集名称</span>
+              <strong id="overviewDatasetName" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="total_cells">
+              <span class="overview-chip-label">总细胞数</span>
+              <strong id="overviewTotalCells" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="cell_type_count">
+              <span class="overview-chip-label">细胞类型</span>
+              <strong id="overviewCellTypeCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="sample_count">
+              <span class="overview-chip-label">样本数</span>
+              <strong id="overviewSampleCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="avg_gene_count">
+              <span class="overview-chip-label">平均基因数</span>
+              <strong id="overviewAvgGeneCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="avg_mito_pct">
+              <span class="overview-chip-label">线粒体比例</span>
+              <strong id="overviewAvgMitoPct" class="overview-chip-value">--</strong>
+            </button>
+          </div>
 
-            <section class="viz-card viz-side-card">
-              <h3 class="viz-title">查询反馈</h3>
-              <dl class="query-metrics">
-                <dt>当前模式</dt>
-                <dd id="queryModeMetric">未查询</dd>
-                <dt>结果数量</dt>
-                <dd id="resultCountMetric">0</dd>
-                <dt>最近耗时</dt>
-                <dd id="queryTimeMetric">--</dd>
-                <dt>高亮点数</dt>
-                <dd id="highlightMetric">0</dd>
-                <dt>Precision@K</dt>
-                <dd id="precisionMetric">--</dd>
-                <dt>Recall@K</dt>
-                <dd id="recallMetric">--</dd>
-                <dt>ANN Time</dt>
-                <dd id="annTimeMetric">--</dd>
-                <dt>Exact Time</dt>
-                <dd id="exactTimeMetric">--</dd>
-              </dl>
+          <div class="analysis-stage">
+            <aside class="stats-sidebar">
+              <details class="stats-card" open>
+                <summary class="stats-card-summary">
+                  <span>细胞类型分布统计</span>
+                  <span id="cellTypeScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div id="cellTypeDonutChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="cellTypeQualityBarChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+
+              <details class="stats-card" open>
+                <summary class="stats-card-summary">
+                  <span>样本来源分布统计</span>
+                  <span id="sampleScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div id="sampleStackChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="sampleSimilarityChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+
+              <details class="stats-card">
+                <summary class="stats-card-summary">
+                  <span>数据质量统计</span>
+                  <span id="qualityScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div class="quality-chart-toolbar">
+                    <button id="qualityMetricGeneBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn is-active" data-quality-metric="gene">基因数</button>
+                    <button id="qualityMetricUmiBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn" data-quality-metric="umi">UMI</button>
+                    <button id="qualityMetricMitoBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn" data-quality-metric="mito">线粒体比例</button>
+                  </div>
+                  <div id="qualityHistogramChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="qualityBoxplotChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+            </aside>
+
+            <section class="analysis-workspace">
+              <section class="viz-card viz-main-card">
+                <div class="viz-card-header">
+                  <div>
+                    <h3 class="viz-title">UMAP 散点分布</h3>
+                    <p class="viz-description">支持多层预览、按字段着色、框选分析与结果联动，用于观察细胞在嵌入空间中的结构和检索命中位置。</p>
+                  </div>
+                  <div class="viz-right-actions">
+                    <div id="umapLegend" class="viz-legend">等待加载</div>
+                    <select id="umapPreviewLevel" class="form-select dashboard-input viz-select">
+                      <option value="preview">快速预览层</option>
+                      <option value="cluster">分群聚合层</option>
+                      <option value="detail">细节探索层</option>
+                    </select>
+                    <select id="umapColorMode" class="form-select dashboard-input viz-select">
+                      <option value="default">默认单色</option>
+                      <option value="cell_type">按细胞类型着色</option>
+                      <option value="disease">按疾病状态着色</option>
+                    </select>
+                    <button id="resetUmapBtn" type="button" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
+                  </div>
+                </div>
+                <div class="viz-toolbar">
+                  <div id="umapInfoBar" class="umap-info-bar">
+                    <span id="umapInfoTotal" class="info-chip">总量 --</span>
+                    <span id="umapInfoShown" class="info-chip">预览 --</span>
+                    <span id="umapInfoFiltered" class="info-chip">筛选后 --</span>
+                    <span id="umapInfoSource" class="info-chip">来源 --</span>
+                    <span id="umapInfoSampled" class="info-chip">采样 --</span>
+                  </div>
+                  <div class="umap-visual-legend" aria-label="UMAP 图例">
+                    <span class="legend-pill legend-bg">背景点</span>
+                    <span class="legend-pill legend-center">查询中心点</span>
+                    <span class="legend-pill legend-hit">Top-K 命中点</span>
+                    <span class="legend-pill legend-focus">当前聚焦</span>
+                  </div>
+                </div>
+                <div class="umap-selection-note">
+                  支持框选当前视图中的细胞子集，左侧统计卡会自动切换到选区统计。
+                </div>
+                <div class="umap-chart-shell">
+                  <div id="umapLoadingOverlay" class="umap-loading-overlay d-none" aria-live="polite">
+                    <div class="umap-skeleton-glow"></div>
+                    <div class="umap-loading-text">正在更新 UMAP 预览...</div>
+                  </div>
+                  <div id="umapChart" class="umap-chart" aria-label="UMAP 散点图"></div>
+                </div>
+              </section>
+
+              <div class="workspace-side-grid">
+                <section class="viz-card viz-side-card">
+                  <h3 class="viz-title">状态摘要</h3>
+                  <p class="viz-description">汇总当前查询模式、结果数量、耗时和高亮点数，帮助观察系统运行状态与检索效果。</p>
+                  <dl class="query-metrics">
+                    <dt>当前模式</dt>
+                    <dd id="queryModeMetric">未查询</dd>
+                    <dt>结果数量</dt>
+                    <dd id="resultCountMetric">0</dd>
+                    <dt>最近耗时</dt>
+                    <dd id="queryTimeMetric">--</dd>
+                    <dt>高亮点数</dt>
+                    <dd id="highlightMetric">0</dd>
+                    <dt>Precision@K</dt>
+                    <dd id="precisionMetric" class="metric-optional">--</dd>
+                    <dt>Recall@K</dt>
+                    <dd id="recallMetric" class="metric-optional">--</dd>
+                    <dt>ANN Time</dt>
+                    <dd id="annTimeMetric" class="metric-optional">--</dd>
+                    <dt>Exact Time</dt>
+                    <dd id="exactTimeMetric" class="metric-optional">--</dd>
+                  </dl>
+                </section>
+
+                <section class="viz-card viz-side-card">
+                  <h3 class="viz-title">细胞详情</h3>
+                  <p class="viz-description">点击单个细胞后显示其关键元数据，可结合统计卡和表格联动查看。</p>
+                  <dl id="cellDetailPanel" class="query-metrics">
+                    <dt>状态</dt>
+                    <dd>尚未选中细胞</dd>
+                  </dl>
+                </section>
+              </div>
             </section>
           </div>
 
@@ -320,6 +558,119 @@
       </main>
     </div>
 
+    <script>
+      (function () {
+        function authMessage(message, tone) {
+          var box = document.getElementById("authMessage");
+          if (!box) return;
+          box.className = "status-message " + (tone === "error" ? "error-message" : tone === "success" ? "success-message" : "neutral-message") + " mb-3";
+          box.textContent = message;
+          box.classList.remove("d-none");
+          box.hidden = false;
+        }
+
+        function authPayload() {
+          return {
+            username: (document.getElementById("authUsername") || {}).value || "",
+            password: (document.getElementById("authPassword") || {}).value || "",
+            role: "user"
+          };
+        }
+
+        function showLoggedInViews(user) {
+          var authView = document.getElementById("authView");
+          var hubView = document.getElementById("hubView");
+          var mainView = document.getElementById("mainView");
+          var hubUserLabel = document.getElementById("hubCurrentUserLabel");
+          var mainUserLabel = document.getElementById("currentUserLabel");
+
+          if (authView) {
+            authView.classList.add("d-none");
+            authView.hidden = true;
+          }
+          if (mainView) {
+            mainView.classList.add("d-none");
+            mainView.hidden = true;
+          }
+          if (hubView) {
+            hubView.classList.remove("d-none");
+            hubView.hidden = false;
+          }
+
+          var label = user && user.username ? user.username + " (" + (user.role || "user") + ")" : "--";
+          if (hubUserLabel) hubUserLabel.textContent = label;
+          if (mainUserLabel) mainUserLabel.textContent = label;
+        }
+
+        window.__seworkLogin = async function () {
+          var btn = document.getElementById("loginBtn");
+          if (btn) btn.disabled = true;
+          authMessage("正在登录...", "neutral");
+          try {
+            var payload = authPayload();
+            var response = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username: String(payload.username || "").trim(), password: payload.password || "" })
+            });
+            var data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "登录失败");
+            }
+            authMessage("登录成功，正在进入系统...", "success");
+            if (window.__seworkAfterLogin) {
+              try {
+                await window.__seworkAfterLogin(data.token, data.user || null);
+                return;
+              } catch (afterLoginError) {
+                console.error("afterLogin bridge failed", afterLoginError);
+              }
+            }
+            localStorage.setItem("authToken", data.token);
+            localStorage.setItem("currentUser", JSON.stringify(data.user || null));
+            showLoggedInViews(data.user || null);
+            if (window.fetch) {
+              fetch("/api/indexes", {
+                headers: { Authorization: "Bearer " + data.token }
+              }).catch(function () {});
+            } else {
+              window.location.replace("/?_ts=" + Date.now());
+            }
+          } catch (error) {
+            authMessage(error.message || "登录失败", "error");
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+
+        window.__seworkRegister = async function () {
+          var btn = document.getElementById("registerBtn");
+          if (btn) btn.disabled = true;
+          authMessage("正在注册...", "neutral");
+          try {
+            var payload = authPayload();
+            var response = await fetch("/api/auth/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                username: String(payload.username || "").trim(),
+                password: payload.password || "",
+                role: "user"
+              })
+            });
+            var data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "注册失败");
+            }
+            authMessage("注册成功，请点击登录。", "success");
+          } catch (error) {
+            authMessage(error.message || "注册失败", "error");
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+      })();
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>

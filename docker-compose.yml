@@ -3,13 +3,13 @@ services:
     image: mysql:8.4
     container_name: ann-mysql
     ports:
-      - "3306:3306"
+      - "3307:3306"
     restart: unless-stopped
     environment:
       MYSQL_DATABASE: sework
       MYSQL_USER: sework
-      MYSQL_PASSWORD: sework123
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_PASSWORD: qwerxjl159357
+      MYSQL_ROOT_PASSWORD: qwerxjl159357
     volumes:
       - mysql_data:/var/lib/mysql
 

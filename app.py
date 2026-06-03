@@ -23,6 +23,7 @@ from services.data_loader import (
     DEFAULT_METADATA_FILTER_FIELDS,
     inspect_cell_dataset,
     load_cell_vectors,
+    load_dataset_analytics,
     load_dataset_metadata_options,
     load_dataset_visualization_preview,
 )
@@ -34,6 +35,7 @@ app.config["SECRET_KEY"] = SECRET_KEY
 index = CellVectorIndex()
 user_store = UserStore(DATABASE_URL, SECRET_KEY)
 user_store.init_db()
+user_store.mark_unfinished_build_jobs_failed()
 INDEX_BUILD_JOBS: dict[str, dict] = {}
 INDEX_BUILD_JOBS_LOCK = Lock()
 
@@ -218,10 +220,23 @@ def _perform_index_build(
     search_params: dict,
     activate: bool,
     progress_callback=None,
+    status_callback=None,
 ):
     collection_name = build_collection_name(user_id, index_name)
     start_time = perf_counter()
     dataset = load_cell_vectors(data_path)
+    if status_callback is not None:
+        status_callback(
+            "dataset_loaded",
+            {
+                "cell_count": dataset.cell_count,
+                "gene_count": dataset.gene_count,
+                "vector_dim": dataset.vector_dim,
+                "embedding_key": dataset.embedding_key,
+                "source_path": dataset.source_path,
+                "source_format": dataset.source_format,
+            },
+        )
     build_meta = index.build(
         dataset=dataset,
         collection_name=collection_name,
@@ -229,6 +244,14 @@ def _perform_index_build(
         search_params=search_params,
         progress_callback=progress_callback,
     )
+    if status_callback is not None:
+        status_callback(
+            "persisting_index",
+            {
+                "cell_count": dataset.cell_count,
+                "collection_name": build_meta["collection"],
+            },
+        )
     elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
     index_record = user_store.create_user_index(
         user_id=user_id,
@@ -271,6 +294,10 @@ def _create_index_build_job(
     search_params: dict,
     activate: bool,
 ):
+    existing_job = user_store.get_latest_running_build_job(user_id)
+    if existing_job:
+        raise ValueError("another index build task is already running for this user")
+
     now = _utc_now_iso()
     job_id = uuid4().hex
     job = {
@@ -287,7 +314,17 @@ def _create_index_build_job(
         "progress_pct": 0.0,
         "processed_cells": 0,
         "total_cells": None,
+        "elapsed_seconds": 0.0,
+        "rate_cells_per_second": None,
         "eta_seconds": None,
+        "dataset_summary": None,
+        "history": [
+            {
+                "time": now,
+                "stage": "queued",
+                "text": "构建任务已创建，等待执行",
+            }
+        ],
         "result": None,
         "error": None,
         "created_at": now,
@@ -301,25 +338,51 @@ def _create_index_build_job(
                 raise ValueError("another index build task is already running for this user")
         INDEX_BUILD_JOBS[job_id] = job
         _trim_index_build_jobs_locked()
+    user_store.create_index_build_job(**job)
     return job
 
 
 def _get_index_build_job(job_id: str) -> dict | None:
     with INDEX_BUILD_JOBS_LOCK:
         job = INDEX_BUILD_JOBS.get(job_id)
-        if not job:
-            return None
+    if job:
         return dict(job)
+    db_job = user_store.get_index_build_job(job_id)
+    if db_job:
+        with INDEX_BUILD_JOBS_LOCK:
+            INDEX_BUILD_JOBS[job_id] = dict(db_job)
+        return db_job
+    return None
 
 
 def _update_index_build_job(job_id: str, **fields):
+    persisted_job = user_store.update_index_build_job(job_id, **fields)
     with INDEX_BUILD_JOBS_LOCK:
         job = INDEX_BUILD_JOBS.get(job_id)
-        if not job:
-            return None
-        job.update(fields)
-        job["updated_at"] = _utc_now_iso()
-        return dict(job)
+        if job:
+            job.update(fields)
+            job["updated_at"] = persisted_job["updated_at"] if persisted_job else _utc_now_iso()
+            return dict(job)
+    if persisted_job:
+        with INDEX_BUILD_JOBS_LOCK:
+            INDEX_BUILD_JOBS[job_id] = dict(persisted_job)
+        return persisted_job
+    return None
+
+
+def _append_index_build_history(job_id: str, *, stage: str, text: str):
+    job = _get_index_build_job(job_id)
+    if not job:
+        return None
+    history = list(job.get("history") or [])
+    history.append(
+        {
+            "time": _utc_now_iso(),
+            "stage": stage,
+            "text": text,
+        }
+    )
+    return _update_index_build_job(job_id, history=history[-12:])
 
 
 def _run_index_build_job(job_id: str):
@@ -341,9 +404,59 @@ def _run_index_build_job(job_id: str):
         message="正在加载数据集...",
         started_at=_utc_now_iso(),
         progress_pct=1.0,
+        elapsed_seconds=0.0,
     )
+    _append_index_build_history(job_id, stage="loading_dataset", text="开始读取数据集并提取向量")
 
     progress_start = perf_counter()
+
+    def on_status(stage: str, payload: dict):
+        elapsed_seconds = round(max(perf_counter() - progress_start, 0.0), 1)
+        if stage == "dataset_loaded":
+            cell_count = payload.get("cell_count")
+            gene_count = payload.get("gene_count")
+            vector_dim = payload.get("vector_dim")
+            summary = {
+                "cell_count": cell_count,
+                "gene_count": gene_count,
+                "vector_dim": vector_dim,
+                "embedding_key": payload.get("embedding_key"),
+                "source_path": payload.get("source_path"),
+                "source_format": payload.get("source_format"),
+            }
+            _update_index_build_job(
+                job_id,
+                status="running",
+                stage="dataset_loaded",
+                message=f"数据集加载完成，共 {cell_count} 个细胞，开始构建向量索引",
+                progress_pct=5.0,
+                processed_cells=0,
+                total_cells=cell_count,
+                elapsed_seconds=elapsed_seconds,
+                dataset_summary=summary,
+            )
+            _append_index_build_history(
+                job_id,
+                stage="dataset_loaded",
+                text=f"数据集加载完成：{cell_count} 个细胞，{gene_count} 个基因，向量维度 {vector_dim}",
+            )
+        elif stage == "persisting_index":
+            _update_index_build_job(
+                job_id,
+                status="running",
+                stage="persisting_index",
+                message="向量写入完成，正在保存索引元数据并激活索引",
+                progress_pct=97.0,
+                processed_cells=payload.get("cell_count"),
+                total_cells=payload.get("cell_count"),
+                elapsed_seconds=elapsed_seconds,
+                eta_seconds=1.0,
+            )
+            _append_index_build_history(
+                job_id,
+                stage="persisting_index",
+                text=f"向量写入完成，正在登记索引集合 {payload.get('collection_name')}",
+            )
 
     def on_progress(processed_cells: int, total_cells: int):
         progress_ratio = (processed_cells / total_cells) if total_cells else 0.0
@@ -363,6 +476,8 @@ def _run_index_build_job(job_id: str):
             progress_pct=progress_pct,
             processed_cells=processed_cells,
             total_cells=total_cells,
+            elapsed_seconds=round(elapsed_seconds, 1),
+            rate_cells_per_second=round(processed_cells / elapsed_seconds, 1) if processed_cells > 0 else None,
             eta_seconds=eta_seconds,
         )
 
@@ -375,6 +490,7 @@ def _run_index_build_job(job_id: str):
             search_params=search_params,
             activate=activate,
             progress_callback=on_progress,
+            status_callback=on_status,
         )
     except Exception as exc:
         _update_index_build_job(
@@ -385,8 +501,10 @@ def _run_index_build_job(job_id: str):
             error=str(exc),
             progress_pct=100.0,
             finished_at=_utc_now_iso(),
+            elapsed_seconds=round(max(perf_counter() - progress_start, 0.0), 1),
             eta_seconds=None,
         )
+        _append_index_build_history(job_id, stage="failed", text=f"索引构建失败：{exc}")
         return
 
     _update_index_build_job(
@@ -397,10 +515,16 @@ def _run_index_build_job(job_id: str):
         progress_pct=100.0,
         processed_cells=result["cell_count"],
         total_cells=result["cell_count"],
+        elapsed_seconds=round(max(perf_counter() - progress_start, 0.0), 1),
+        rate_cells_per_second=round(
+            result["cell_count"] / max(perf_counter() - progress_start, 0.001),
+            1,
+        ),
         result=result,
         finished_at=_utc_now_iso(),
         eta_seconds=0.0,
     )
+    _append_index_build_history(job_id, stage="completed", text="索引构建完成，可进行 Top-K 检索")
 
 
 def _start_index_build_job(job_id: str):
@@ -417,7 +541,11 @@ def _public_index_build_job(job: dict) -> dict:
         "progress_pct": job["progress_pct"],
         "processed_cells": job["processed_cells"],
         "total_cells": job["total_cells"],
+        "elapsed_seconds": job.get("elapsed_seconds"),
+        "rate_cells_per_second": job.get("rate_cells_per_second"),
         "eta_seconds": job["eta_seconds"],
+        "dataset_summary": job.get("dataset_summary"),
+        "history": job.get("history") or [],
         "error": job["error"],
         "result": job["result"],
         "created_at": job["created_at"],
@@ -425,6 +553,22 @@ def _public_index_build_job(job: dict) -> dict:
         "started_at": job["started_at"],
         "finished_at": job["finished_at"],
     }
+
+
+def _find_reusable_index_for_request(user_id: int, data_path: str, hnsw_params: dict, search_params: dict):
+    index_record = user_store.find_reusable_user_index(
+        user_id,
+        data_path=data_path,
+        hnsw_params=hnsw_params,
+        search_params=search_params,
+    )
+    if not index_record:
+        return None
+    try:
+        _require_collection_exists(index_record["collection_name"])
+    except Exception:
+        return None
+    return index_record
 
 
 def require_auth(view_func):
@@ -504,12 +648,16 @@ def health():
 @app.post("/api/auth/register")
 def register():
     payload = request.get_json(silent=True) or {}
+    requested_role = payload.get("role", "user")
+
+    if requested_role != "user":
+        return jsonify({"error": "管理员账号不开放自助注册，请联系项目团队处理"}), 403
 
     try:
         user = user_store.register(
             username=payload.get("username"),
             password=payload.get("password"),
-            role=payload.get("role", "user"),
+            role="user",
         )
     except AuthError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -627,8 +775,41 @@ def build_index():
     search_params = payload.get("search_params") or {}
     activate = _to_bool(payload.get("activate"), default=True)
     run_async = _to_bool(payload.get("async"), default=False)
+    reuse_if_available = _to_bool(payload.get("reuse_if_available"), default=True)
+
+    if reuse_if_available:
+        reusable_index = _find_reusable_index_for_request(user_id, data_path, hnsw_params, search_params)
+        if reusable_index:
+            if activate and not reusable_index["is_active"]:
+                reusable_index = user_store.set_active_user_index(user_id, reusable_index["id"])
+            return (
+                jsonify(
+                    {
+                        "message": "reused existing index",
+                        "reused": True,
+                        "index": reusable_index,
+                    }
+                ),
+                200,
+            )
 
     if run_async:
+        existing_job = user_store.get_latest_running_build_job(user_id, data_path=data_path)
+        if existing_job and existing_job.get("hnsw_params") == hnsw_params and existing_job.get("search_params") == search_params:
+            with INDEX_BUILD_JOBS_LOCK:
+                INDEX_BUILD_JOBS[existing_job["job_id"]] = dict(existing_job)
+            return (
+                jsonify(
+                    {
+                        "message": "existing build job resumed",
+                        "job_id": existing_job["job_id"],
+                        "status": existing_job["status"],
+                        "stage": existing_job["stage"],
+                        "resumed": True,
+                    }
+                ),
+                202,
+            )
         try:
             job = _create_index_build_job(
                 user_id=user_id,
@@ -685,6 +866,19 @@ def index_build_job_status(job_id):
     return jsonify({"job": _public_index_build_job(job)})
 
 
+@app.get("/api/index/build/jobs/latest-running")
+@require_auth
+def latest_running_index_build_job():
+    user_id = request.current_user["id"]
+    data_path = request.args.get("data_path")
+    job = user_store.get_latest_running_build_job(user_id, data_path=data_path)
+    if not job:
+        return jsonify({"job": None})
+    with INDEX_BUILD_JOBS_LOCK:
+        INDEX_BUILD_JOBS[job["job_id"]] = dict(job)
+    return jsonify({"job": _public_index_build_job(job)})
+
+
 @app.get("/api/visualization/umap")
 @require_auth
 def visualization_umap():
@@ -736,21 +930,42 @@ def dataset_umap_preview():
     if not data_path:
         return jsonify({"error": "data_path is required"}), 400
 
-    try:
-        limit = int(request.args.get("limit", 10000))
-    except Exception as exc:
-        return jsonify({"error": f"invalid limit: {exc}"}), 400
+    raw_limit = request.args.get("limit")
+    limit = None
+    if raw_limit not in (None, ""):
+        try:
+            limit = int(raw_limit)
+        except Exception as exc:
+            return jsonify({"error": f"invalid limit: {exc}"}), 400
+
+    level = request.args.get("level", "preview")
 
     try:
         preview = load_dataset_visualization_preview(
             data_path=data_path,
             limit=limit,
             seed=42,
+            level=level,
         )
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
     return jsonify(preview)
+
+
+@app.get("/api/dataset/umap-stats")
+@require_auth
+def dataset_umap_stats():
+    data_path = request.args.get("data_path")
+    if not data_path:
+        return jsonify({"error": "data_path is required"}), 400
+
+    try:
+        stats = load_dataset_analytics(data_path=data_path)
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(stats)
 
 
 @app.get("/api/dataset/metadata-options")
