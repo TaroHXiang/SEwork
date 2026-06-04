@@ -470,6 +470,18 @@ class CellVectorIndex:
         ]
         return all(path.exists() for path in required_files)
 
+    def delete_collection(self, collection_name: str) -> bool:
+        collection_dir = self._collection_dir(collection_name)
+        existed = collection_dir.exists()
+        self._collection_cache.pop(collection_name, None)
+        if existed:
+            shutil.rmtree(collection_dir)
+        if self.collection_name == collection_name:
+            self.collection_name = None
+            self.vector_dim = None
+            self.dataset_summary = None
+        return existed
+
     def set_active_collection(
         self,
         collection_name: str,

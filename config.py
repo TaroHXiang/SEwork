@@ -10,6 +10,9 @@ load_dotenv(BASE_DIR / ".env")
 DATA_DIR = BASE_DIR / "data"
 DATABASE_URL = os.getenv("DATABASE_URL")
 FAISS_SERVICE_URL = os.getenv("FAISS_SERVICE_URL", "http://127.0.0.1:8000")
+ZHIPU_API_KEY = os.getenv("ZHIPU_API_KEY")
+ZHIPU_MODEL = os.getenv("ZHIPU_MODEL", "glm-4-flash-250414")
+ZHIPU_API_URL = os.getenv("ZHIPU_API_URL", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
 FAISS_INDEX_PATH = Path(
     os.getenv(
         "FAISS_INDEX_PATH",
