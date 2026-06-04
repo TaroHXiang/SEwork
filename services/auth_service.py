@@ -1,6 +1,7 @@
 import json
 import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -10,7 +11,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 
-VALID_ROLES = {"user", "admin"}
+VALID_ROLES = {"user", "admin", "super_admin"}
 
 
 class AuthError(Exception):
@@ -73,11 +74,42 @@ class UserStore:
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     username VARCHAR(32) NOT NULL UNIQUE,
                     password_hash VARCHAR(255) NOT NULL,
-                    role VARCHAR(16) NOT NULL,
+                    role ENUM('user', 'admin', 'super_admin') NOT NULL,
                     is_active TINYINT(1) NOT NULL DEFAULT 1,
+                    display_name VARCHAR(64) NULL,
+                    email VARCHAR(128) NULL,
+                    last_login_at VARCHAR(40) NULL,
+                    last_login_ip VARCHAR(64) NULL,
+                    created_by INT NULL,
+                    disabled_reason VARCHAR(255) NULL,
+                    token_version INT NOT NULL DEFAULT 1,
+                    created_at VARCHAR(40) NOT NULL,
+                    updated_at VARCHAR(40) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS datasets (
+                    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    owner_user_id INT NOT NULL,
+                    dataset_name VARCHAR(128) NOT NULL,
+                    data_path TEXT NOT NULL,
+                    source_format VARCHAR(32) NULL,
+                    cell_count INT NULL,
+                    gene_count INT NULL,
+                    vector_dim INT NULL,
+                    embedding_key VARCHAR(128) NULL,
+                    visualization_source VARCHAR(128) NULL,
+                    metadata_summary JSON NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'ready',
                     created_at VARCHAR(40) NOT NULL,
                     updated_at VARCHAR(40) NOT NULL,
-                    CHECK (role IN ('user', 'admin'))
+                    UNIQUE KEY uq_user_dataset_path (owner_user_id, data_path(255)),
+                    INDEX idx_datasets_owner_updated (owner_user_id, updated_at),
+                    CONSTRAINT fk_datasets_owner
+                        FOREIGN KEY (owner_user_id) REFERENCES users(id)
+                        ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
@@ -86,6 +118,7 @@ class UserStore:
                 CREATE TABLE IF NOT EXISTS user_indexes (
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     user_id INT NOT NULL,
+                    dataset_id INT NULL,
                     index_name VARCHAR(64) NOT NULL,
                     collection_name VARCHAR(128) NOT NULL UNIQUE,
                     data_path TEXT NOT NULL,
@@ -94,6 +127,7 @@ class UserStore:
                     gene_count INT,
                     vector_dim INT,
                     embedding_key VARCHAR(128),
+                    visualization_source VARCHAR(128),
                     index_type VARCHAR(32) NOT NULL,
                     distance_metric VARCHAR(32) NOT NULL,
                     effective_metric VARCHAR(32) NOT NULL,
@@ -101,6 +135,7 @@ class UserStore:
                     metadata_keys JSON NOT NULL,
                     hnsw_params JSON NOT NULL,
                     search_params JSON NOT NULL,
+                    created_by INT NULL,
                     build_time_ms DOUBLE,
                     is_active TINYINT(1) NOT NULL DEFAULT 0,
                     status VARCHAR(32) NOT NULL DEFAULT 'ready',
@@ -109,7 +144,30 @@ class UserStore:
                     UNIQUE KEY uq_user_index_name (user_id, index_name),
                     CONSTRAINT fk_user_indexes_user
                         FOREIGN KEY (user_id) REFERENCES users(id)
-                        ON DELETE CASCADE
+                        ON DELETE CASCADE,
+                    CONSTRAINT fk_user_indexes_dataset
+                        FOREIGN KEY (dataset_id) REFERENCES datasets(id)
+                        ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_audit_logs (
+                    id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    actor_user_id INT NOT NULL,
+                    actor_role VARCHAR(16) NOT NULL,
+                    action_type VARCHAR(64) NOT NULL,
+                    target_user_id INT NULL,
+                    target_index_id INT NULL,
+                    target_dataset_id INT NULL,
+                    target_username VARCHAR(32) NULL,
+                    detail_json JSON NULL,
+                    ip_address VARCHAR(64) NULL,
+                    created_at VARCHAR(40) NOT NULL,
+                    INDEX idx_admin_audit_created (created_at),
+                    INDEX idx_admin_audit_actor (actor_user_id, created_at),
+                    INDEX idx_admin_audit_target_user (target_user_id, created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
@@ -118,6 +176,8 @@ class UserStore:
                 CREATE TABLE IF NOT EXISTS index_build_jobs (
                     job_id VARCHAR(64) NOT NULL PRIMARY KEY,
                     user_id INT NOT NULL,
+                    dataset_id INT NULL,
+                    requested_by INT NULL,
                     data_path TEXT NOT NULL,
                     index_name VARCHAR(64) NOT NULL,
                     index_type VARCHAR(32) NOT NULL,
@@ -140,6 +200,8 @@ class UserStore:
                     history JSON NOT NULL,
                     result_json JSON NULL,
                     error_text TEXT NULL,
+                    trigger_source VARCHAR(32) NOT NULL DEFAULT 'user_ui',
+                    job_type VARCHAR(32) NOT NULL DEFAULT 'build_index',
                     created_at VARCHAR(40) NOT NULL,
                     updated_at VARCHAR(40) NOT NULL,
                     started_at VARCHAR(40) NULL,
@@ -148,27 +210,70 @@ class UserStore:
                     CONSTRAINT fk_build_jobs_user
                         FOREIGN KEY (user_id) REFERENCES users(id)
                         ON DELETE CASCADE
+                        ,
+                    CONSTRAINT fk_build_jobs_dataset
+                        FOREIGN KEY (dataset_id) REFERENCES datasets(id)
+                        ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
             self._migrate_schema(conn)
 
     def _migrate_schema(self, conn):
+        self._drop_check_constraints(conn, "users")
+        conn.execute(
+            """
+            ALTER TABLE users
+            MODIFY COLUMN role ENUM('user', 'admin', 'super_admin') NOT NULL
+            """
+        )
         migration_columns = [
+            ("users", "display_name", "VARCHAR(64) NULL"),
+            ("users", "email", "VARCHAR(128) NULL"),
+            ("users", "last_login_at", "VARCHAR(40) NULL"),
+            ("users", "last_login_ip", "VARCHAR(64) NULL"),
+            ("users", "created_by", "INT NULL"),
+            ("users", "disabled_reason", "VARCHAR(255) NULL"),
+            ("users", "token_version", "INT NOT NULL DEFAULT 1"),
             ("user_indexes", "index_type", "VARCHAR(32) NOT NULL DEFAULT 'hnsw'"),
             ("user_indexes", "distance_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
             ("user_indexes", "effective_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
             ("user_indexes", "quantization_config", "JSON NULL"),
+            ("user_indexes", "dataset_id", "INT NULL"),
+            ("user_indexes", "visualization_source", "VARCHAR(128) NULL"),
+            ("user_indexes", "created_by", "INT NULL"),
             ("index_build_jobs", "index_type", "VARCHAR(32) NOT NULL DEFAULT 'hnsw'"),
             ("index_build_jobs", "distance_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
             ("index_build_jobs", "effective_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
             ("index_build_jobs", "quantization_config", "JSON NULL"),
+            ("index_build_jobs", "dataset_id", "INT NULL"),
+            ("index_build_jobs", "requested_by", "INT NULL"),
+            ("index_build_jobs", "trigger_source", "VARCHAR(32) NOT NULL DEFAULT 'user_ui'"),
+            ("index_build_jobs", "job_type", "VARCHAR(32) NOT NULL DEFAULT 'build_index'"),
         ]
         for table_name, column_name, column_sql in migration_columns:
             if not self._column_exists(conn, table_name, column_name):
                 conn.execute(
                     f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
                 )
+        self._add_foreign_key_if_missing(
+            conn,
+            table_name="user_indexes",
+            constraint_name="fk_user_indexes_dataset",
+            column_name="dataset_id",
+            ref_table="datasets",
+            ref_column="id",
+            on_delete="SET NULL",
+        )
+        self._add_foreign_key_if_missing(
+            conn,
+            table_name="index_build_jobs",
+            constraint_name="fk_build_jobs_dataset",
+            column_name="dataset_id",
+            ref_table="datasets",
+            ref_column="id",
+            on_delete="SET NULL",
+        )
 
         conn.execute(
             """
@@ -200,6 +305,13 @@ class UserStore:
         )
         conn.execute(
             """
+            UPDATE users
+            SET token_version = 1
+            WHERE token_version IS NULL OR token_version < 1
+            """
+        )
+        conn.execute(
+            """
             UPDATE index_build_jobs
             SET index_type = 'hnsw'
             WHERE index_type IS NULL OR index_type = ''
@@ -226,6 +338,28 @@ class UserStore:
             WHERE quantization_config IS NULL
             """
         )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET requested_by = user_id
+            WHERE requested_by IS NULL
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET trigger_source = 'user_ui'
+            WHERE trigger_source IS NULL OR trigger_source = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET job_type = 'build_index'
+            WHERE job_type IS NULL OR job_type = ''
+            """
+        )
+        self._backfill_dataset_records(conn)
 
     def _column_exists(self, conn, table_name, column_name):
         row = conn.execute(
@@ -233,6 +367,205 @@ class UserStore:
             (column_name,),
         ).fetchone()
         return row is not None
+
+    def _constraint_exists(self, conn, table_name, constraint_name):
+        row = conn.execute(
+            """
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND CONSTRAINT_NAME = ?
+            """,
+            (table_name, constraint_name),
+        ).fetchone()
+        return row is not None
+
+    def _drop_check_constraints(self, conn, table_name):
+        rows = conn.execute(
+            """
+            SELECT CONSTRAINT_NAME
+            FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND CONSTRAINT_TYPE = 'CHECK'
+            """,
+            (table_name,),
+        ).fetchall()
+        for row in rows:
+            conn.execute(f"ALTER TABLE {table_name} DROP CHECK {row['CONSTRAINT_NAME']}")
+
+    def _add_foreign_key_if_missing(
+        self,
+        conn,
+        *,
+        table_name,
+        constraint_name,
+        column_name,
+        ref_table,
+        ref_column,
+        on_delete="CASCADE",
+    ):
+        if self._constraint_exists(conn, table_name, constraint_name):
+            return
+        conn.execute(
+            f"""
+            ALTER TABLE {table_name}
+            ADD CONSTRAINT {constraint_name}
+            FOREIGN KEY ({column_name}) REFERENCES {ref_table}({ref_column})
+            ON DELETE {on_delete}
+            """
+        )
+
+    def _backfill_dataset_records(self, conn):
+        rows = conn.execute(
+            """
+            SELECT
+                user_id,
+                data_path,
+                source_format,
+                cell_count,
+                gene_count,
+                vector_dim,
+                embedding_key,
+                visualization_source,
+                MIN(created_at) AS created_at,
+                MAX(updated_at) AS updated_at
+            FROM user_indexes
+            GROUP BY
+                user_id,
+                data_path,
+                source_format,
+                cell_count,
+                gene_count,
+                vector_dim,
+                embedding_key,
+                visualization_source
+            """
+        ).fetchall()
+        for row in rows:
+            dataset_id = self._ensure_dataset_row(
+                conn,
+                owner_user_id=row["user_id"],
+                data_path=row["data_path"],
+                dataset_name=None,
+                source_format=row.get("source_format"),
+                cell_count=row.get("cell_count"),
+                gene_count=row.get("gene_count"),
+                vector_dim=row.get("vector_dim"),
+                embedding_key=row.get("embedding_key"),
+                visualization_source=row.get("visualization_source"),
+                metadata_summary=None,
+                status="ready",
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at"),
+            )
+            conn.execute(
+                """
+                UPDATE user_indexes
+                SET dataset_id = ?
+                WHERE user_id = ? AND data_path = ? AND dataset_id IS NULL
+                """,
+                (dataset_id, row["user_id"], row["data_path"]),
+            )
+            conn.execute(
+                """
+                UPDATE index_build_jobs
+                SET dataset_id = ?
+                WHERE user_id = ? AND data_path = ? AND dataset_id IS NULL
+                """,
+                (dataset_id, row["user_id"], row["data_path"]),
+            )
+
+    def _ensure_dataset_row(
+        self,
+        conn,
+        *,
+        owner_user_id,
+        data_path,
+        dataset_name=None,
+        source_format=None,
+        cell_count=None,
+        gene_count=None,
+        vector_dim=None,
+        embedding_key=None,
+        visualization_source=None,
+        metadata_summary=None,
+        status="ready",
+        created_at=None,
+        updated_at=None,
+    ):
+        normalized_path = str(data_path or "").strip()
+        if not normalized_path:
+            raise AuthError("data_path is required")
+        dataset_name = (dataset_name or Path(normalized_path).stem or "dataset").strip()[:128] or "dataset"
+        now = self._now()
+        created_at = created_at or now
+        updated_at = updated_at or now
+        row = conn.execute(
+            """
+            SELECT id
+            FROM datasets
+            WHERE owner_user_id = ? AND data_path = ?
+            LIMIT 1
+            """,
+            (owner_user_id, normalized_path),
+        ).fetchone()
+        metadata_summary_json = (
+            json.dumps(metadata_summary, ensure_ascii=False) if metadata_summary is not None else None
+        )
+        if row:
+            updates = ["dataset_name = ?", "status = ?", "updated_at = ?"]
+            values = [dataset_name, status or "ready", updated_at]
+            optional_fields = {
+                "source_format": source_format,
+                "cell_count": cell_count,
+                "gene_count": gene_count,
+                "vector_dim": vector_dim,
+                "embedding_key": embedding_key,
+                "visualization_source": visualization_source,
+            }
+            for field_name, field_value in optional_fields.items():
+                if field_value is None:
+                    continue
+                updates.append(f"{field_name} = ?")
+                values.append(field_value)
+            if metadata_summary is not None:
+                updates.append("metadata_summary = ?")
+                values.append(metadata_summary_json)
+            values.append(row["id"])
+            conn.execute(
+                f"UPDATE datasets SET {', '.join(updates)} WHERE id = ?",
+                values,
+            )
+            return row["id"]
+
+        cursor = conn.execute(
+            """
+            INSERT INTO datasets (
+                owner_user_id, dataset_name, data_path, source_format,
+                cell_count, gene_count, vector_dim, embedding_key,
+                visualization_source, metadata_summary, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                owner_user_id,
+                dataset_name,
+                normalized_path,
+                source_format,
+                int(cell_count) if cell_count is not None else None,
+                int(gene_count) if gene_count is not None else None,
+                int(vector_dim) if vector_dim is not None else None,
+                embedding_key,
+                visualization_source,
+                metadata_summary_json,
+                status or "ready",
+                created_at,
+                updated_at,
+            ),
+        )
+        return cursor.lastrowid
 
     def mark_unfinished_build_jobs_failed(self, reason="service restarted before task finished"):
         now = self._now()
@@ -270,12 +603,23 @@ class UserStore:
                     ),
                 )
 
-    def register(self, username, password, role="user", admin_key=None, expected_admin_key=None):
+    def register(
+        self,
+        username,
+        password,
+        role="user",
+        admin_key=None,
+        expected_admin_key=None,
+        *,
+        created_by=None,
+        display_name=None,
+        email=None,
+    ):
         username = self._normalize_username(username)
         self._validate_password(password)
 
         if role not in VALID_ROLES:
-            raise AuthError("role must be user or admin")
+            raise AuthError("role must be user, admin or super_admin")
 
         now = self._now()
         password_hash = generate_password_hash(password)
@@ -284,10 +628,23 @@ class UserStore:
             with self._connect() as conn:
                 cursor = conn.execute(
                     """
-                    INSERT INTO users (username, password_hash, role, is_active, created_at, updated_at)
-                    VALUES (?, ?, ?, 1, ?, ?)
+                    INSERT INTO users (
+                        username, password_hash, role, is_active,
+                        display_name, email, created_by, token_version,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, 1, ?, ?, ?, 1, ?, ?)
                     """,
-                    (username, password_hash, role, now, now),
+                    (
+                        username,
+                        password_hash,
+                        role,
+                        (display_name or "").strip() or None,
+                        (email or "").strip() or None,
+                        created_by,
+                        now,
+                        now,
+                    ),
                 )
                 user_id = cursor.lastrowid
         except pymysql.err.IntegrityError as exc:
@@ -295,7 +652,7 @@ class UserStore:
 
         return self.get_user(user_id)
 
-    def login(self, username, password):
+    def login(self, username, password, ip_address=None):
         username = self._normalize_username(username)
         user = self.get_user_by_username(username, include_password=True)
         if not user or not check_password_hash(user["password_hash"], password or ""):
@@ -303,13 +660,25 @@ class UserStore:
         if not user["is_active"]:
             raise AuthError("user is disabled")
 
-        public_user = self._public_user(user)
-        token = self.create_token(public_user)
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET last_login_at = ?, last_login_ip = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (now, (ip_address or "").strip() or None, now, user["id"]),
+            )
+        refreshed_user = self.get_user_by_username(username, include_password=True)
+        public_user = self._public_user(refreshed_user)
+        token = self.create_token(refreshed_user)
         return token, public_user
 
     def create_token(self, user):
         payload = {
             "user_id": user["id"],
+            "token_version": int(user.get("token_version") or 1),
             "nonce": secrets.token_urlsafe(8),
         }
         return self.serializer.dumps(payload, salt="auth-token")
@@ -334,38 +703,63 @@ class UserStore:
             raise AuthError("user not found")
         if not user["is_active"]:
             raise AuthError("user is disabled")
+        if int(user.get("token_version") or 1) != int(payload.get("token_version") or 1):
+            raise AuthError("authorization token expired")
         return user
 
     def list_users(self):
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, username, role, is_active, created_at, updated_at
+                SELECT
+                    id, username, role, is_active, display_name, email,
+                    last_login_at, last_login_ip, created_by, disabled_reason,
+                    token_version, created_at, updated_at
                 FROM users
                 ORDER BY id ASC
                 """
             ).fetchall()
         return [self._public_user(dict(row)) for row in rows]
 
-    def update_user(self, user_id, role=None, is_active=None):
+    def update_user(self, user_id, role=None, is_active=None, display_name=None, email=None, disabled_reason=None):
         user = self.get_user(user_id)
         if not user:
             raise AuthError("user not found")
 
         updates = []
         values = []
+        invalidate_tokens = False
         if role is not None:
             if role not in VALID_ROLES:
-                raise AuthError("role must be user or admin")
+                raise AuthError("role must be user, admin or super_admin")
             updates.append("role = ?")
             values.append(role)
+            invalidate_tokens = invalidate_tokens or role != user["role"]
         if is_active is not None:
             updates.append("is_active = ?")
             values.append(1 if bool(is_active) else 0)
+            if bool(is_active):
+                updates.append("disabled_reason = ?")
+                values.append(None)
+            elif disabled_reason is not None:
+                updates.append("disabled_reason = ?")
+                values.append((disabled_reason or "").strip()[:255] or None)
+            invalidate_tokens = True
+        if display_name is not None:
+            updates.append("display_name = ?")
+            values.append((display_name or "").strip()[:64] or None)
+        if email is not None:
+            updates.append("email = ?")
+            values.append((email or "").strip()[:128] or None)
+        if disabled_reason is not None and is_active is None:
+            updates.append("disabled_reason = ?")
+            values.append((disabled_reason or "").strip()[:255] or None)
 
         if not updates:
             return user
 
+        if invalidate_tokens:
+            updates.append("token_version = token_version + 1")
         updates.append("updated_at = ?")
         values.append(self._now())
         values.append(user_id)
@@ -374,6 +768,23 @@ class UserStore:
             conn.execute(
                 f"UPDATE users SET {', '.join(updates)} WHERE id = ?",
                 values,
+            )
+        return self.get_user(user_id)
+
+    def reset_user_password(self, user_id, new_password):
+        user = self.get_user(user_id)
+        if not user:
+            raise AuthError("user not found")
+        self._validate_password(new_password)
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?, token_version = token_version + 1, updated_at = ?
+                WHERE id = ?
+                """,
+                (generate_password_hash(new_password), now, user_id),
             )
         return self.get_user(user_id)
 
@@ -392,7 +803,10 @@ class UserStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, username, role, is_active, created_at, updated_at
+                SELECT
+                    id, username, role, is_active, display_name, email,
+                    last_login_at, last_login_ip, created_by, disabled_reason,
+                    token_version, created_at, updated_at
                 FROM users
                 WHERE id = ?
                 """,
@@ -401,7 +815,11 @@ class UserStore:
         return self._public_user(dict(row)) if row else None
 
     def get_user_by_username(self, username, include_password=False):
-        fields = "id, username, role, is_active, created_at, updated_at"
+        fields = (
+            "id, username, role, is_active, display_name, email, "
+            "last_login_at, last_login_ip, created_by, disabled_reason, "
+            "token_version, created_at, updated_at"
+        )
         if include_password:
             fields += ", password_hash"
 
@@ -422,8 +840,8 @@ class UserStore:
             rows = conn.execute(
                 """
                 SELECT
-                    id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key,
+                    id, user_id, dataset_id, index_name, collection_name, data_path, source_format,
+                    cell_count, gene_count, vector_dim, embedding_key, visualization_source, created_by,
                     index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
@@ -440,8 +858,8 @@ class UserStore:
             row = conn.execute(
                 """
                 SELECT
-                    id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key,
+                    id, user_id, dataset_id, index_name, collection_name, data_path, source_format,
+                    cell_count, gene_count, vector_dim, embedding_key, visualization_source, created_by,
                     index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
@@ -457,8 +875,8 @@ class UserStore:
             row = conn.execute(
                 """
                 SELECT
-                    id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key,
+                    id, user_id, dataset_id, index_name, collection_name, data_path, source_format,
+                    cell_count, gene_count, vector_dim, embedding_key, visualization_source, created_by,
                     index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
@@ -475,8 +893,8 @@ class UserStore:
             fallback = conn.execute(
                 """
                 SELECT
-                    id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key,
+                    id, user_id, dataset_id, index_name, collection_name, data_path, source_format,
+                    cell_count, gene_count, vector_dim, embedding_key, visualization_source, created_by,
                     index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
@@ -500,6 +918,7 @@ class UserStore:
         gene_count,
         vector_dim,
         embedding_key,
+        visualization_source,
         index_type,
         distance_metric,
         effective_metric,
@@ -508,6 +927,8 @@ class UserStore:
         hnsw_params,
         search_params,
         build_time_ms,
+        dataset_id=None,
+        created_by=None,
         is_active=True,
         status="ready",
     ):
@@ -528,16 +949,17 @@ class UserStore:
                 cursor = conn.execute(
                     """
                     INSERT INTO user_indexes (
-                        user_id, index_name, collection_name, data_path, source_format,
-                        cell_count, gene_count, vector_dim, embedding_key,
+                        user_id, dataset_id, index_name, collection_name, data_path, source_format,
+                        cell_count, gene_count, vector_dim, embedding_key, visualization_source,
                         index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
-                        hnsw_params, search_params, build_time_ms, is_active, status,
+                        hnsw_params, search_params, created_by, build_time_ms, is_active, status,
                         created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
+                        dataset_id,
                         index_name,
                         collection_name,
                         str(data_path),
@@ -546,6 +968,7 @@ class UserStore:
                         int(gene_count),
                         int(vector_dim),
                         embedding_key,
+                        visualization_source,
                         index_type,
                         distance_metric,
                         effective_metric,
@@ -553,6 +976,7 @@ class UserStore:
                         metadata_keys_json,
                         hnsw_params_json,
                         search_params_json,
+                        created_by,
                         float(build_time_ms),
                         1 if is_active else 0,
                         status,
@@ -675,6 +1099,8 @@ class UserStore:
         *,
         job_id,
         user_id,
+        dataset_id,
+        requested_by,
         data_path,
         index_name,
         index_type,
@@ -697,6 +1123,8 @@ class UserStore:
         history,
         result,
         error,
+        trigger_source,
+        job_type,
         created_at,
         updated_at,
         started_at,
@@ -706,17 +1134,19 @@ class UserStore:
             conn.execute(
                 """
                 INSERT INTO index_build_jobs (
-                    job_id, user_id, data_path, index_name, index_type, distance_metric, effective_metric,
+                    job_id, user_id, dataset_id, requested_by, data_path, index_name, index_type, distance_metric, effective_metric,
                     hnsw_params, search_params, quantization_config,
                     activate, status, stage, message, progress_pct, processed_cells, total_cells,
                     elapsed_seconds, rate_cells_per_second, eta_seconds, dataset_summary, history,
-                    result_json, error_text, created_at, updated_at, started_at, finished_at
+                    result_json, error_text, trigger_source, job_type, created_at, updated_at, started_at, finished_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     user_id,
+                    dataset_id,
+                    requested_by,
                     str(data_path),
                     index_name,
                     index_type,
@@ -739,6 +1169,8 @@ class UserStore:
                     json.dumps(history or [], ensure_ascii=False),
                     json.dumps(result, ensure_ascii=False) if result is not None else None,
                     error,
+                    trigger_source,
+                    job_type,
                     created_at,
                     updated_at,
                     started_at,
@@ -821,6 +1253,13 @@ class UserStore:
             "username": user["username"],
             "role": user["role"],
             "is_active": bool(user["is_active"]),
+            "display_name": user.get("display_name"),
+            "email": user.get("email"),
+            "last_login_at": user.get("last_login_at"),
+            "last_login_ip": user.get("last_login_ip"),
+            "created_by": user.get("created_by"),
+            "disabled_reason": user.get("disabled_reason"),
+            "token_version": int(user.get("token_version") or 1),
             "created_at": user["created_at"],
             "updated_at": user["updated_at"],
         }
@@ -828,6 +1267,8 @@ class UserStore:
     def _row_to_user_index(self, row):
         item = dict(row)
         item["is_active"] = bool(item["is_active"])
+        item["dataset_id"] = int(item["dataset_id"]) if item.get("dataset_id") is not None else None
+        item["created_by"] = int(item["created_by"]) if item.get("created_by") is not None else None
         item["index_type"] = item.get("index_type") or "hnsw"
         item["distance_metric"] = item.get("distance_metric") or "cosine"
         item["effective_metric"] = item.get("effective_metric") or "cosine"
@@ -840,6 +1281,8 @@ class UserStore:
     def _row_to_build_job(self, row):
         item = dict(row)
         item["activate"] = bool(item.get("activate"))
+        item["dataset_id"] = int(item["dataset_id"]) if item.get("dataset_id") is not None else None
+        item["requested_by"] = int(item["requested_by"]) if item.get("requested_by") is not None else None
         item["progress_pct"] = float(item.get("progress_pct") or 0)
         item["processed_cells"] = int(item.get("processed_cells") or 0)
         item["total_cells"] = int(item["total_cells"]) if item.get("total_cells") is not None else None

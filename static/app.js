@@ -20,15 +20,43 @@ const hubNewDatasetMessage = document.querySelector("#hubNewDatasetMessage");
 const adminPanelSection = document.querySelector("#adminPanelSection");
 const adminUserCount = document.querySelector("#adminUserCount");
 const adminActiveUserCount = document.querySelector("#adminActiveUserCount");
+const adminDisabledUserCount = document.querySelector("#adminDisabledUserCount");
+const adminDatasetCount = document.querySelector("#adminDatasetCount");
+const adminIndexCount = document.querySelector("#adminIndexCount");
+const adminFailedJobCount = document.querySelector("#adminFailedJobCount");
 const adminAdminCount = document.querySelector("#adminAdminCount");
+const adminInProgressJobCount = document.querySelector("#adminInProgressJobCount");
+const adminTabs = document.querySelector("#adminTabs");
+const adminRefreshDashboardBtn = document.querySelector("#adminRefreshDashboardBtn");
 const adminCreateUsername = document.querySelector("#adminCreateUsername");
+const adminCreateDisplayName = document.querySelector("#adminCreateDisplayName");
+const adminCreateEmail = document.querySelector("#adminCreateEmail");
 const adminCreatePassword = document.querySelector("#adminCreatePassword");
 const adminCreateRole = document.querySelector("#adminCreateRole");
 const adminCreateUserBtn = document.querySelector("#adminCreateUserBtn");
 const adminMessage = document.querySelector("#adminMessage");
-const adminRefreshUsersBtn = document.querySelector("#adminRefreshUsersBtn");
 const adminUsersHint = document.querySelector("#adminUsersHint");
 const adminUsersBody = document.querySelector("#adminUsersBody");
+const adminOverviewTab = document.querySelector("#adminOverviewTab");
+const adminUsersTab = document.querySelector("#adminUsersTab");
+const adminDatasetsTab = document.querySelector("#adminDatasetsTab");
+const adminIndexesTab = document.querySelector("#adminIndexesTab");
+const adminJobsTab = document.querySelector("#adminJobsTab");
+const adminAuditTab = document.querySelector("#adminAuditTab");
+const adminUserDetailHint = document.querySelector("#adminUserDetailHint");
+const adminUserDetailMeta = document.querySelector("#adminUserDetailMeta");
+const adminUserDatasetsList = document.querySelector("#adminUserDatasetsList");
+const adminUserIndexesList = document.querySelector("#adminUserIndexesList");
+const adminUserJobsList = document.querySelector("#adminUserJobsList");
+const adminDatasetsBody = document.querySelector("#adminDatasetsBody");
+const adminIndexesBody = document.querySelector("#adminIndexesBody");
+const adminBuildJobsBody = document.querySelector("#adminBuildJobsBody");
+const adminAuditLogsBody = document.querySelector("#adminAuditLogsBody");
+const adminIndexTypeChartElement = document.querySelector("#adminIndexTypeChart");
+const adminMetricChartElement = document.querySelector("#adminMetricChart");
+const adminBuildTrendChartElement = document.querySelector("#adminBuildTrendChart");
+const adminTopUsersChartElement = document.querySelector("#adminTopUsersChart");
+const adminUserDetailChartElement = document.querySelector("#adminUserDetailChart");
 
 const backToHubBtn = document.querySelector("#backToHubBtn");
 const currentDatasetLabel = document.querySelector("#currentDatasetLabel");
@@ -195,7 +223,14 @@ const state = {
   aiAssistantBusy: false,
   aiAssistantMessages: [],
   contextHelpOpen: false,
+  adminOverview: null,
   adminUsers: [],
+  adminDatasets: [],
+  adminIndexes: [],
+  adminBuildJobs: [],
+  adminAuditLogs: [],
+  adminUserDetail: null,
+  adminActiveTab: "overview",
 };
 
 const BUILD_STAGE_LABELS = {
@@ -222,7 +257,11 @@ function sleep(ms) {
 }
 
 function isAdmin() {
-  return state.currentUser?.role === "admin";
+  return ["admin", "super_admin"].includes(trimText(state.currentUser?.role).toLowerCase());
+}
+
+function isSuperAdmin() {
+  return trimText(state.currentUser?.role).toLowerCase() === "super_admin";
 }
 
 function loadPersistedBuildJob() {
@@ -1057,13 +1096,170 @@ function showMainView() {
   });
 }
 
-function renderAdminSummary(users = []) {
-  const all = Array.isArray(users) ? users : [];
-  const active = all.filter((item) => item.is_active).length;
-  const admins = all.filter((item) => item.role === "admin").length;
-  if (adminUserCount) adminUserCount.textContent = formatNumber(all.length);
-  if (adminActiveUserCount) adminActiveUserCount.textContent = formatNumber(active);
-  if (adminAdminCount) adminAdminCount.textContent = formatNumber(admins);
+function formatAdminTimestamp(value) {
+  const text = trimText(value);
+  return text ? text.replace("T", " ").slice(0, 19) : "-";
+}
+
+function adminRoleClass(role) {
+  const normalized = trimText(role).toLowerCase();
+  if (normalized === "super_admin") return "role-super-admin";
+  if (normalized === "admin") return "role-admin";
+  return "role-user";
+}
+
+function adminStatusClass(status) {
+  const normalized = trimText(status).toLowerCase();
+  if (normalized === "completed" || normalized === "ready" || normalized === "active") return "status-active";
+  if (normalized === "failed" || normalized === "disabled" || normalized === "inactive") return "status-disabled";
+  return "status-pending";
+}
+
+function formatBuildParamsInline(item = {}) {
+  const entries = typeof historyIndexParamEntries === "function" ? historyIndexParamEntries(item) : [];
+  if (!entries.length) return "-";
+  return entries
+    .map(([label, value]) => `${label}:${value}`)
+    .join(" · ");
+}
+
+function getAdminTabPanel(tabName) {
+  return {
+    overview: adminOverviewTab,
+    users: adminUsersTab,
+    datasets: adminDatasetsTab,
+    indexes: adminIndexesTab,
+    jobs: adminJobsTab,
+    audit: adminAuditTab,
+  }[tabName] || null;
+}
+
+function setAdminTab(tabName = "overview") {
+  state.adminActiveTab = tabName;
+  document.querySelectorAll("[data-admin-tab]").forEach((button) => {
+    const active = button.dataset.adminTab === tabName;
+    button.classList.toggle("is-active", active);
+  });
+  [adminOverviewTab, adminUsersTab, adminDatasetsTab, adminIndexesTab, adminJobsTab, adminAuditTab].forEach((panel) => {
+    if (!panel) return;
+    const active = panel === getAdminTabPanel(tabName);
+    panel.classList.toggle("is-active", active);
+  });
+}
+
+function renderAdminSummary(overview = null) {
+  const counts = overview?.counts || {};
+  if (adminUserCount) adminUserCount.textContent = formatNumber(counts.users_total || 0);
+  if (adminActiveUserCount) adminActiveUserCount.textContent = formatNumber(counts.users_active || 0);
+  if (adminDisabledUserCount) adminDisabledUserCount.textContent = formatNumber(counts.users_disabled || 0);
+  if (adminDatasetCount) adminDatasetCount.textContent = formatNumber(counts.datasets_total || 0);
+  if (adminIndexCount) adminIndexCount.textContent = formatNumber(counts.indexes_total || 0);
+  if (adminFailedJobCount) adminFailedJobCount.textContent = formatNumber(counts.jobs_failed || 0);
+  if (adminAdminCount) {
+    adminAdminCount.textContent = formatNumber((counts.admins_total || 0) + (counts.super_admins_total || 0));
+  }
+  if (adminInProgressJobCount) adminInProgressJobCount.textContent = formatNumber(counts.jobs_in_progress || 0);
+}
+
+function renderAdminOverviewCharts(overview = null) {
+  const data = overview || state.adminOverview;
+  const indexTypeChart = getOrCreateChart("adminIndexTypeChart", adminIndexTypeChartElement);
+  const metricChart = getOrCreateChart("adminMetricChart", adminMetricChartElement);
+  const buildTrendChart = getOrCreateChart("adminBuildTrendChart", adminBuildTrendChartElement);
+  const topUsersChart = getOrCreateChart("adminTopUsersChart", adminTopUsersChartElement);
+
+  if (indexTypeChart) {
+    indexTypeChart.setOption({
+      tooltip: { trigger: "item" },
+      series: [{ type: "pie", radius: ["42%", "72%"], data: data?.distributions?.index_types || [] }],
+    });
+  }
+  if (metricChart) {
+    metricChart.setOption({
+      tooltip: { trigger: "item" },
+      series: [{ type: "pie", radius: ["42%", "72%"], data: data?.distributions?.metrics || [] }],
+    });
+  }
+  if (buildTrendChart) {
+    const trend = Array.isArray(data?.build_job_trend) ? data.build_job_trend : [];
+    buildTrendChart.setOption({
+      tooltip: { trigger: "axis" },
+      legend: { textStyle: { color: "#cbd5e1" } },
+      xAxis: { type: "category", data: trend.map((item) => item.day) },
+      yAxis: { type: "value" },
+      series: [
+        { name: "总任务", type: "line", smooth: true, data: trend.map((item) => item.total) },
+        { name: "成功", type: "line", smooth: true, data: trend.map((item) => item.completed) },
+        { name: "失败", type: "line", smooth: true, data: trend.map((item) => item.failed) },
+      ],
+    });
+  }
+  if (topUsersChart) {
+    const topUsers = Array.isArray(data?.top_users) ? data.top_users : [];
+    topUsersChart.setOption({
+      tooltip: { trigger: "axis" },
+      xAxis: { type: "value" },
+      yAxis: {
+        type: "category",
+        data: topUsers.map((item) => item.username),
+      },
+      series: [{ type: "bar", data: topUsers.map((item) => item.index_count) }],
+    });
+  }
+}
+
+function renderAdminUserDetail(detail = null) {
+  state.adminUserDetail = detail;
+  if (!detail?.user) {
+    if (adminUserDetailHint) adminUserDetailHint.textContent = "未选择用户";
+    if (adminUserDetailMeta) adminUserDetailMeta.innerHTML = "点击上方“详情”查看该用户的数据集、索引和任务情况。";
+    if (adminUserDatasetsList) adminUserDatasetsList.innerHTML = "--";
+    if (adminUserIndexesList) adminUserIndexesList.innerHTML = "--";
+    if (adminUserJobsList) adminUserJobsList.innerHTML = "--";
+    const detailChart = getOrCreateChart("adminUserDetailChart", adminUserDetailChartElement);
+    if (detailChart) detailChart.clear();
+    return;
+  }
+
+  const user = detail.user;
+  if (adminUserDetailHint) adminUserDetailHint.textContent = `${user.username} (${user.role})`;
+  if (adminUserDetailMeta) {
+    adminUserDetailMeta.innerHTML = `
+      <div class="admin-detail-pairs">
+        <span>账号：${escapeHtml(user.username)}</span>
+        <span>角色：${escapeHtml(user.role)}</span>
+        <span>状态：${escapeHtml(user.is_active ? "启用" : "停用")}</span>
+        <span>最近登录：${escapeHtml(formatAdminTimestamp(user.last_login_at))}</span>
+        <span>数据集：${escapeHtml(formatNumber(user.dataset_count || 0))}</span>
+        <span>索引：${escapeHtml(formatNumber(user.index_count || 0))}</span>
+      </div>
+    `;
+  }
+  if (adminUserDatasetsList) {
+    const datasets = Array.isArray(detail.datasets) ? detail.datasets.slice(0, 8) : [];
+    adminUserDatasetsList.innerHTML = datasets.length
+      ? datasets.map((item) => `<div>${escapeHtml(item.dataset_name || item.data_path || "-")} · ${escapeHtml(item.status || "-")}</div>`).join("")
+      : "无数据集";
+  }
+  if (adminUserIndexesList) {
+    const indexes = Array.isArray(detail.indexes) ? detail.indexes.slice(0, 8) : [];
+    adminUserIndexesList.innerHTML = indexes.length
+      ? indexes.map((item) => `<div>${escapeHtml(item.index_name)} · ${escapeHtml(item.index_type)} · ${escapeHtml(item.distance_metric)}</div>`).join("")
+      : "无索引";
+  }
+  if (adminUserJobsList) {
+    const jobs = Array.isArray(detail.jobs) ? detail.jobs.slice(0, 8) : [];
+    adminUserJobsList.innerHTML = jobs.length
+      ? jobs.map((item) => `<div>${escapeHtml(item.index_name || "-")} · ${escapeHtml(item.status || "-")} · ${escapeHtml(formatAdminTimestamp(item.updated_at))}</div>`).join("")
+      : "无任务";
+  }
+  const detailChart = getOrCreateChart("adminUserDetailChart", adminUserDetailChartElement);
+  if (detailChart) {
+    detailChart.setOption({
+      tooltip: { trigger: "item" },
+      series: [{ type: "pie", radius: ["38%", "70%"], data: detail?.charts?.index_types || [] }],
+    });
+  }
 }
 
 function renderAdminUsers(users = []) {
@@ -1071,31 +1267,35 @@ function renderAdminUsers(users = []) {
   if (!users.length) {
     adminUsersBody.innerHTML = `
       <tr>
-        <td colspan="6" class="table-state">当前没有可显示的用户账号</td>
+        <td colspan="10" class="table-state">当前没有可显示的用户账号</td>
       </tr>
     `;
-    renderAdminSummary([]);
     return;
   }
 
-  renderAdminSummary(users);
   adminUsersBody.innerHTML = users
     .map((user) => {
       const isCurrent = Number(user.id) === Number(state.currentUser?.id);
-      const statusText = user.is_active ? "启用" : "停用";
-      const toggleText = user.is_active ? "停用" : "启用";
+      const manageable = !isCurrent && user.role !== "super_admin" && (isSuperAdmin() || user.role === "user");
+      const canToggleRole = manageable && isSuperAdmin() && ["user", "admin"].includes(user.role);
       const roleToggleText = user.role === "admin" ? "降为用户" : "设为管理员";
       return `
         <tr data-admin-user-id="${escapeHtml(user.id)}">
           <td>${escapeHtml(user.id)}</td>
           <td>${escapeHtml(user.username)}</td>
-          <td><span class="table-pill ${user.role === "admin" ? "role-admin" : "role-user"}">${escapeHtml(user.role)}</span></td>
-          <td><span class="table-pill ${user.is_active ? "status-active" : "status-disabled"}">${escapeHtml(statusText)}</span></td>
-          <td>${escapeHtml(user.created_at || "-")}</td>
+          <td>${escapeHtml(user.display_name || "-")}</td>
+          <td><span class="table-pill ${adminRoleClass(user.role)}">${escapeHtml(user.role)}</span></td>
+          <td><span class="table-pill ${user.is_active ? "status-active" : "status-disabled"}">${escapeHtml(user.is_active ? "启用" : "停用")}</span></td>
+          <td>${escapeHtml(formatAdminTimestamp(user.last_login_at))}</td>
+          <td>${escapeHtml(formatNumber(user.dataset_count || 0))}</td>
+          <td>${escapeHtml(formatNumber(user.index_count || 0))}</td>
+          <td>${escapeHtml(user.last_job_status || "-")}</td>
           <td class="admin-actions-cell">
-            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="toggle-status" data-user-id="${escapeHtml(user.id)}" ${isCurrent ? "disabled" : ""}>${escapeHtml(toggleText)}</button>
-            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="toggle-role" data-user-id="${escapeHtml(user.id)}" data-role="${escapeHtml(user.role)}" ${isCurrent ? "disabled" : ""}>${escapeHtml(roleToggleText)}</button>
-            ${isCurrent ? '<span class="admin-self-hint">当前账号</span>' : `<button class="btn action-btn danger-btn btn-sm" data-admin-action="delete-user" data-user-id="${escapeHtml(user.id)}">删除</button>`}
+            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="detail-user" data-user-id="${escapeHtml(user.id)}">详情</button>
+            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="toggle-status" data-user-id="${escapeHtml(user.id)}" ${manageable ? "" : "disabled"}>${escapeHtml(user.is_active ? "停用" : "启用")}</button>
+            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="reset-password" data-user-id="${escapeHtml(user.id)}" ${manageable ? "" : "disabled"}>重置密码</button>
+            <button class="btn action-btn secondary-btn btn-sm" data-admin-action="toggle-role" data-user-id="${escapeHtml(user.id)}" ${canToggleRole ? "" : "disabled"}>${escapeHtml(roleToggleText)}</button>
+            ${isCurrent ? '<span class="admin-self-hint">当前账号</span>' : `<button class="btn action-btn danger-btn btn-sm" data-admin-action="delete-user" data-user-id="${escapeHtml(user.id)}" ${manageable ? "" : "disabled"}>删除</button>`}
           </td>
         </tr>
       `;
@@ -1103,24 +1303,180 @@ function renderAdminUsers(users = []) {
     .join("");
 }
 
+function renderAdminDatasets(datasets = []) {
+  if (!adminDatasetsBody) return;
+  if (!datasets.length) {
+    adminDatasetsBody.innerHTML = `<tr><td colspan="10" class="table-state">当前没有可显示的数据集</td></tr>`;
+    return;
+  }
+  adminDatasetsBody.innerHTML = datasets
+    .map((item) => `
+      <tr>
+        <td>${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.owner_username || "-")}</td>
+        <td>${escapeHtml(item.dataset_name || "-")}</td>
+        <td>${escapeHtml(item.data_path || "-")}</td>
+        <td>${escapeHtml(item.source_format || "-")}</td>
+        <td>${escapeHtml(formatNumber(item.cell_count || 0))}</td>
+        <td>${escapeHtml(item.vector_dim ?? "-")}</td>
+        <td><span class="table-pill ${adminStatusClass(item.status)}">${escapeHtml(item.status || "-")}</span></td>
+        <td>${escapeHtml(formatNumber(item.index_count || 0))}</td>
+        <td class="admin-actions-cell">
+          <button class="btn action-btn danger-btn btn-sm" data-admin-action="delete-dataset" data-dataset-id="${escapeHtml(item.id)}">删除</button>
+        </td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderAdminIndexes(indexes = []) {
+  if (!adminIndexesBody) return;
+  if (!indexes.length) {
+    adminIndexesBody.innerHTML = `<tr><td colspan="10" class="table-state">当前没有可显示的索引</td></tr>`;
+    return;
+  }
+  adminIndexesBody.innerHTML = indexes
+    .map((item) => `
+      <tr>
+        <td>${escapeHtml(item.id)}</td>
+        <td>${escapeHtml(item.owner_username || "-")}</td>
+        <td>${escapeHtml(item.dataset_name || "-")}</td>
+        <td>${escapeHtml(item.index_name || "-")}</td>
+        <td>${escapeHtml(item.index_type || "-")}</td>
+        <td>${escapeHtml(item.distance_metric || "-")}</td>
+        <td>${escapeHtml(formatBuildParamsInline(item))}</td>
+        <td><span class="table-pill ${item.is_active ? "status-active" : adminStatusClass(item.status)}">${escapeHtml(item.is_active ? "active" : item.status || "-")}</span></td>
+        <td>${escapeHtml(formatAdminTimestamp(item.updated_at))}</td>
+        <td class="admin-actions-cell">
+          <button class="btn action-btn secondary-btn btn-sm" data-admin-action="activate-index" data-index-id="${escapeHtml(item.id)}">激活</button>
+          <button class="btn action-btn danger-btn btn-sm" data-admin-action="delete-index" data-index-id="${escapeHtml(item.id)}">删除</button>
+        </td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderAdminBuildJobs(jobs = []) {
+  if (!adminBuildJobsBody) return;
+  if (!jobs.length) {
+    adminBuildJobsBody.innerHTML = `<tr><td colspan="7" class="table-state">当前没有可显示的任务</td></tr>`;
+    return;
+  }
+  adminBuildJobsBody.innerHTML = jobs
+    .map((job) => `
+      <tr>
+        <td>${escapeHtml(job.job_id || "-")}</td>
+        <td>${escapeHtml(job.owner_username || "-")}</td>
+        <td>${escapeHtml(job.dataset_name || "-")}</td>
+        <td>${escapeHtml(job.index_name || "-")}</td>
+        <td><span class="table-pill ${adminStatusClass(job.status)}">${escapeHtml(job.status || "-")}</span></td>
+        <td>${escapeHtml(job.stage || "-")}</td>
+        <td>${escapeHtml(formatAdminTimestamp(job.updated_at))}</td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderAdminAuditLogs(logs = []) {
+  if (!adminAuditLogsBody) return;
+  if (!logs.length) {
+    adminAuditLogsBody.innerHTML = `<tr><td colspan="6" class="table-state">当前没有审计日志</td></tr>`;
+    return;
+  }
+  adminAuditLogsBody.innerHTML = logs
+    .map((item) => {
+      const target = item.target_username || item.target_dataset_id || item.target_index_id || "-";
+      const detail = Object.keys(item.detail || {}).length ? JSON.stringify(item.detail) : "-";
+      return `
+        <tr>
+          <td>${escapeHtml(formatAdminTimestamp(item.created_at))}</td>
+          <td>${escapeHtml(item.actor_username || `#${item.actor_user_id}`)}</td>
+          <td>${escapeHtml(item.actor_role || "-")}</td>
+          <td>${escapeHtml(item.action_type || "-")}</td>
+          <td>${escapeHtml(String(target))}</td>
+          <td>${escapeHtml(detail)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderAdminDashboard() {
+  renderAdminSummary(state.adminOverview);
+  renderAdminOverviewCharts(state.adminOverview);
+  renderAdminUsers(state.adminUsers);
+  renderAdminDatasets(state.adminDatasets);
+  renderAdminIndexes(state.adminIndexes);
+  renderAdminBuildJobs(state.adminBuildJobs);
+  renderAdminAuditLogs(state.adminAuditLogs);
+  renderAdminUserDetail(state.adminUserDetail);
+}
+
+async function loadAdminOverview() {
+  const data = await getJson("/api/admin/overview");
+  state.adminOverview = data.overview || null;
+}
+
 async function loadAdminUsers() {
+  const data = await getJson("/api/admin/users");
+  state.adminUsers = Array.isArray(data.users) ? data.users : [];
+  if (adminUsersHint) adminUsersHint.textContent = `共 ${state.adminUsers.length} 个账号`;
+}
+
+async function loadAdminDatasets() {
+  const data = await getJson("/api/admin/datasets");
+  state.adminDatasets = Array.isArray(data.datasets) ? data.datasets : [];
+}
+
+async function loadAdminIndexes() {
+  const data = await getJson("/api/admin/indexes");
+  state.adminIndexes = Array.isArray(data.indexes) ? data.indexes : [];
+}
+
+async function loadAdminBuildJobs() {
+  const data = await getJson("/api/admin/build-jobs?limit=120");
+  state.adminBuildJobs = Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function loadAdminAuditLogs() {
+  const data = await getJson("/api/admin/audit-logs?limit=120");
+  state.adminAuditLogs = Array.isArray(data.logs) ? data.logs : [];
+}
+
+async function loadAdminUserDetail(userId) {
+  if (!userId) {
+    renderAdminUserDetail(null);
+    return;
+  }
+  const detail = await getJson(`/api/admin/users/${encodeURIComponent(userId)}`);
+  renderAdminUserDetail(detail);
+}
+
+async function loadAdminDashboard() {
   if (!isAdmin()) {
     applyRoleUI();
     return;
   }
+  setMessage(adminMessage, "正在同步管理员工作台...", "neutral");
   if (adminUsersHint) adminUsersHint.textContent = "同步中";
-  setMessage(adminMessage, "正在同步用户列表...", "neutral");
-  try {
-    const data = await getJson("/api/admin/users");
-    state.adminUsers = Array.isArray(data.users) ? data.users : [];
-    renderAdminUsers(state.adminUsers);
-    if (adminUsersHint) adminUsersHint.textContent = `共 ${state.adminUsers.length} 个账号`;
-    setMessage(adminMessage, "用户列表已更新，可执行创建、启停和角色调整操作。", "success");
-  } catch (error) {
-    renderAdminUsers([]);
-    if (adminUsersHint) adminUsersHint.textContent = "加载失败";
-    setMessage(adminMessage, `用户列表加载失败：${error.message}`, "error");
+  await Promise.all([
+    loadAdminOverview(),
+    loadAdminUsers(),
+    loadAdminDatasets(),
+    loadAdminIndexes(),
+    loadAdminBuildJobs(),
+    loadAdminAuditLogs(),
+  ]);
+  renderAdminDashboard();
+  if (state.adminUserDetail?.user?.id) {
+    const exists = state.adminUsers.some((item) => Number(item.id) === Number(state.adminUserDetail.user.id));
+    if (exists) {
+      await loadAdminUserDetail(state.adminUserDetail.user.id);
+    } else {
+      renderAdminUserDetail(null);
+    }
   }
+  setMessage(adminMessage, "管理员工作台已更新。", "success");
 }
 
 async function createManagedUser() {
@@ -1128,6 +1484,8 @@ async function createManagedUser() {
     throw new Error("当前账号无管理员权限");
   }
   const username = trimText(adminCreateUsername?.value);
+  const displayName = trimText(adminCreateDisplayName?.value);
+  const email = trimText(adminCreateEmail?.value);
   const password = adminCreatePassword?.value || "";
   const role = trimText(adminCreateRole?.value) || "user";
 
@@ -1137,12 +1495,14 @@ async function createManagedUser() {
   adminCreateUserBtn.disabled = true;
   setMessage(adminMessage, "正在创建用户...", "neutral");
   try {
-    const data = await postJson("/api/admin/users", { username, password, role });
+    const data = await postJson("/api/admin/users", { username, display_name: displayName, email, password, role });
     if (adminCreateUsername) adminCreateUsername.value = "";
+    if (adminCreateDisplayName) adminCreateDisplayName.value = "";
+    if (adminCreateEmail) adminCreateEmail.value = "";
     if (adminCreatePassword) adminCreatePassword.value = "";
     if (adminCreateRole) adminCreateRole.value = "user";
     setMessage(adminMessage, `用户已创建：${data.user?.username || username}`, "success");
-    await loadAdminUsers();
+    await loadAdminDashboard();
   } finally {
     adminCreateUserBtn.disabled = false;
   }
@@ -1157,7 +1517,13 @@ async function updateManagedUser(userId, payload, successMessage) {
     body: JSON.stringify(payload),
   });
   setMessage(adminMessage, successMessage, "success");
-  await loadAdminUsers();
+  await loadAdminDashboard();
+}
+
+async function resetManagedUserPassword(userId, password) {
+  await postJson(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, { password });
+  setMessage(adminMessage, "密码已重置", "success");
+  await loadAdminDashboard();
 }
 
 async function deleteManagedUser(userId) {
@@ -1165,8 +1531,27 @@ async function deleteManagedUser(userId) {
     throw new Error("当前账号无管理员权限");
   }
   await requestJson(`/api/admin/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  renderAdminUserDetail(null);
   setMessage(adminMessage, "用户已删除", "success");
-  await loadAdminUsers();
+  await loadAdminDashboard();
+}
+
+async function deleteManagedDataset(datasetId) {
+  await requestJson(`/api/admin/datasets/${encodeURIComponent(datasetId)}`, { method: "DELETE" });
+  setMessage(adminMessage, "数据集已删除", "success");
+  await loadAdminDashboard();
+}
+
+async function activateManagedIndex(indexId) {
+  await postJson(`/api/admin/indexes/${encodeURIComponent(indexId)}/activate`, {});
+  setMessage(adminMessage, "索引已激活", "success");
+  await loadAdminDashboard();
+}
+
+async function deleteManagedIndex(indexId) {
+  await requestJson(`/api/admin/indexes/${encodeURIComponent(indexId)}`, { method: "DELETE" });
+  setMessage(adminMessage, "索引已删除", "success");
+  await loadAdminDashboard();
 }
 
 function saveSession(token, user) {
@@ -1187,21 +1572,43 @@ function applyRoleUI() {
   toggleAdminOnly(hubAdminBadge, admin);
   toggleAdminOnly(mainAdminBadge, admin);
   toggleAdminOnly(adminPanelSection, admin);
+  if (adminCreateRole) {
+    const adminOption = Array.from(adminCreateRole.options || []).find((item) => item.value === "admin");
+    if (adminOption) {
+      adminOption.hidden = !isSuperAdmin();
+      adminOption.disabled = !isSuperAdmin();
+      if (!isSuperAdmin() && adminCreateRole.value === "admin") {
+        adminCreateRole.value = "user";
+      }
+    }
+  }
 
   if (!admin) {
+    state.adminOverview = null;
     state.adminUsers = [];
-    if (adminUsersBody) {
-      adminUsersBody.innerHTML = `
-        <tr>
-          <td colspan="6" class="table-state">当前账号不是管理员，无法查看用户管理面板</td>
-        </tr>
-      `;
-    }
+    state.adminDatasets = [];
+    state.adminIndexes = [];
+    state.adminBuildJobs = [];
+    state.adminAuditLogs = [];
+    renderAdminUserDetail(null);
+    if (adminUsersBody) adminUsersBody.innerHTML = `<tr><td colspan="10" class="table-state">当前账号不是管理员，无法查看用户管理面板</td></tr>`;
+    if (adminDatasetsBody) adminDatasetsBody.innerHTML = `<tr><td colspan="10" class="table-state">当前账号不是管理员，无法查看数据集管理面板</td></tr>`;
+    if (adminIndexesBody) adminIndexesBody.innerHTML = `<tr><td colspan="10" class="table-state">当前账号不是管理员，无法查看索引管理面板</td></tr>`;
+    if (adminBuildJobsBody) adminBuildJobsBody.innerHTML = `<tr><td colspan="7" class="table-state">当前账号不是管理员，无法查看任务监管面板</td></tr>`;
+    if (adminAuditLogsBody) adminAuditLogsBody.innerHTML = `<tr><td colspan="6" class="table-state">当前账号不是管理员，无法查看审计面板</td></tr>`;
     if (adminUsersHint) adminUsersHint.textContent = "仅管理员可见";
     if (adminUserCount) adminUserCount.textContent = "0";
     if (adminActiveUserCount) adminActiveUserCount.textContent = "0";
+    if (adminDisabledUserCount) adminDisabledUserCount.textContent = "0";
+    if (adminDatasetCount) adminDatasetCount.textContent = "0";
+    if (adminIndexCount) adminIndexCount.textContent = "0";
+    if (adminFailedJobCount) adminFailedJobCount.textContent = "0";
     if (adminAdminCount) adminAdminCount.textContent = "0";
+    if (adminInProgressJobCount) adminInProgressJobCount.textContent = "0";
+    return;
   }
+
+  setAdminTab(state.adminActiveTab || "overview");
 }
 
 function clearSession() {
@@ -1212,7 +1619,13 @@ function clearSession() {
   state.activeIndex = null;
   state.currentDataPath = "";
   state.currentDatasetInfo = null;
+  state.adminOverview = null;
   state.adminUsers = [];
+  state.adminDatasets = [];
+  state.adminIndexes = [];
+  state.adminBuildJobs = [];
+  state.adminAuditLogs = [];
+  state.adminUserDetail = null;
   localStorage.removeItem("authToken");
   localStorage.removeItem("currentUser");
   showAuthView();
@@ -2626,7 +3039,7 @@ async function deleteHistoryIndex(indexId) {
 async function loadHubData() {
   const tasks = [loadHistoryIndexes()];
   if (isAdmin()) {
-    tasks.push(loadAdminUsers());
+    tasks.push(loadAdminDashboard());
   }
   await Promise.allSettled(tasks);
 }
@@ -3402,11 +3815,19 @@ if (evaluateToggle) {
   });
 }
 
-if (adminRefreshUsersBtn) {
-  adminRefreshUsersBtn.addEventListener("click", () => {
-    loadAdminUsers().catch((error) => {
+if (adminRefreshDashboardBtn) {
+  adminRefreshDashboardBtn.addEventListener("click", () => {
+    loadAdminDashboard().catch((error) => {
       setMessage(adminMessage, error.message, "error");
     });
+  });
+}
+
+if (adminTabs) {
+  adminTabs.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-tab]");
+    if (!button) return;
+    setAdminTab(button.dataset.adminTab || "overview");
   });
 }
 
@@ -3430,6 +3851,11 @@ if (adminUsersBody) {
     const run = async () => {
       button.disabled = true;
       try {
+        if (action === "detail-user") {
+          await loadAdminUserDetail(userId);
+          return;
+        }
+
         if (action === "toggle-status") {
           const current = state.adminUsers.find((item) => Number(item.id) === userId);
           if (!current) throw new Error("未找到目标用户");
@@ -3441,6 +3867,16 @@ if (adminUsersBody) {
             { is_active: nextActive },
             `账号 ${current.username} 已${nextActive ? "启用" : "停用"}`
           );
+          return;
+        }
+
+        if (action === "reset-password") {
+          const current = state.adminUsers.find((item) => Number(item.id) === userId);
+          if (!current) throw new Error("未找到目标用户");
+          const password = window.prompt(`请输入账号“${current.username}”的新密码（至少 6 位）`);
+          if (password === null) return;
+          if (String(password).length < 6) throw new Error("密码至少需要 6 位");
+          await resetManagedUserPassword(userId, password);
           return;
         }
 
@@ -3468,6 +3904,67 @@ if (adminUsersBody) {
       }
     };
 
+    run().catch((error) => {
+      setMessage(adminMessage, error.message, "error");
+      button.disabled = false;
+    });
+  });
+}
+
+if (adminDatasetsBody) {
+  adminDatasetsBody.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-action='delete-dataset']");
+    if (!button) return;
+    const datasetId = Number(button.dataset.datasetId);
+    if (!Number.isInteger(datasetId) || datasetId <= 0) return;
+    const current = state.adminDatasets.find((item) => Number(item.id) === datasetId);
+    const label = current?.dataset_name || `#${datasetId}`;
+    const run = async () => {
+      button.disabled = true;
+      try {
+        const confirmed = window.confirm(`确定要删除数据集“${label}”吗？关联索引也会一并删除。`);
+        if (!confirmed) return;
+        await deleteManagedDataset(datasetId);
+      } catch (error) {
+        setMessage(adminMessage, error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    };
+    run().catch((error) => {
+      setMessage(adminMessage, error.message, "error");
+      button.disabled = false;
+    });
+  });
+}
+
+if (adminIndexesBody) {
+  adminIndexesBody.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-admin-action]");
+    if (!button) return;
+    const action = button.dataset.adminAction;
+    const indexId = Number(button.dataset.indexId);
+    if (!Number.isInteger(indexId) || indexId <= 0) return;
+    const current = state.adminIndexes.find((item) => Number(item.id) === indexId);
+    const label = current?.index_name || `#${indexId}`;
+    const run = async () => {
+      button.disabled = true;
+      try {
+        if (action === "activate-index") {
+          await activateManagedIndex(indexId);
+          return;
+        }
+        if (action === "delete-index") {
+          const confirmed = window.confirm(`确定要删除索引“${label}”吗？该操作不可恢复。`);
+          if (!confirmed) return;
+          await deleteManagedIndex(indexId);
+        }
+      } catch (error) {
+        setMessage(adminMessage, error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    };
     run().catch((error) => {
       setMessage(adminMessage, error.message, "error");
       button.disabled = false;
