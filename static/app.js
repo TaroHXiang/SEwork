@@ -2578,7 +2578,10 @@ async function loadUmapForCurrentDataset() {
     );
     applyUmapData(preview);
     state.currentDatasetInfo = normalizeDatasetInfo(
-      { ...state.currentDatasetInfo, ...preview },
+      {
+        ...state.currentDatasetInfo,
+        visualization_source: preview.visualization_source || state.currentDatasetInfo?.visualization_source,
+      },
       state.currentDataPath
     );
     renderDatasetInfo(state.currentDatasetInfo);
