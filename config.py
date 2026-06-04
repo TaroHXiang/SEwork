@@ -30,7 +30,7 @@ QDRANT_COLLECTION = VECTOR_INDEX_COLLECTION
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 ADMIN_SETUP_KEY = os.getenv("ADMIN_SETUP_KEY")
 
-API_TOP_K_MAX = int(os.getenv("API_TOP_K_MAX", "100"))
+API_TOP_K_MAX = int(os.getenv("API_TOP_K_MAX", "10000"))
 API_UMAP_LIMIT_MAX = int(os.getenv("API_UMAP_LIMIT_MAX", "100000"))
 API_METADATA_VALUES_MAX = int(os.getenv("API_METADATA_VALUES_MAX", "1000"))
 MAX_INDEX_BUILD_JOBS = int(os.getenv("MAX_INDEX_BUILD_JOBS", "200"))

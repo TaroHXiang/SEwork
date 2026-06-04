@@ -186,6 +186,11 @@ const state = {
   buildJobId: null,
   buildPollTimer: null,
   buildJobContextPath: "",
+  buildPollToken: 0,
+  buildPollInFlight: false,
+  buildElapsedTimer: null,
+  buildElapsedAnchorMs: null,
+  buildElapsedStatus: "",
   aiAssistantOpen: false,
   aiAssistantBusy: false,
   aiAssistantMessages: [],
@@ -194,10 +199,10 @@ const state = {
 };
 
 const BUILD_STAGE_LABELS = {
-  queued: "任务排队中",
+  queued: "任务执行状态",
   loading_dataset: "加载数据集",
   dataset_loaded: "数据集已就绪",
-  building_hnsw: "构建 HNSW 索引",
+  building_hnsw: "构建对应索引",
   persisting_index: "保存索引信息",
   completed: "构建完成",
   failed: "构建失败",
@@ -277,9 +282,9 @@ function formatTime(value) {
 
 function humanizeIndexType(value) {
   const normalized = trimText(value).toLowerCase();
-  if (normalized === "hnsw") return "FAISS HNSW";
-  if (normalized === "ivf") return "FAISS IVF";
-  if (normalized === "pq") return "FAISS PQ";
+  if (normalized === "hnsw") return "HNSW";
+  if (normalized === "ivf") return "IVF";
+  if (normalized === "pq") return "PQ";
   return normalized ? normalized.toUpperCase() : "--";
 }
 
@@ -303,6 +308,38 @@ function humanizeDistanceMetric(value, effectiveMetric = "") {
   return label;
 }
 
+function historyIndexParamEntries(item = {}) {
+  const indexType = trimText(item.index_type).toLowerCase();
+  const hnswParams = item.hnsw_params || {};
+  const searchParams = item.search_params || {};
+  const quantizationConfig = item.quantization_config || {};
+
+  if (indexType === "hnsw") {
+    return [
+      ["HNSW M", hnswParams.m ?? "--"],
+      ["EF Construct", hnswParams.ef_construct ?? "--"],
+      ["EF Search", searchParams.hnsw_ef ?? "--"],
+    ];
+  }
+
+  if (indexType === "ivf") {
+    return [
+      ["IVF NList", quantizationConfig.nlist ?? "--"],
+      ["IVF NProbe", searchParams.nprobe ?? "--"],
+    ];
+  }
+
+  if (indexType === "pq") {
+    return [
+      ["PQ Compression", quantizationConfig.compression || "--"],
+      ["PQ SubQ", quantizationConfig.subquantizers ?? "--"],
+      ["PQ NBits", quantizationConfig.nbits ?? "--"],
+    ];
+  }
+
+  return [];
+}
+
 function formatRate(value) {
   if (value === null || value === undefined || value === "") return "--";
   const num = Number(value);
@@ -314,6 +351,93 @@ function formatEtaSeconds(value) {
   const num = Number(value);
   return Number.isFinite(num) ? `${num.toFixed(1)} s` : String(value);
 }
+
+function parseTimestampMs(value) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function resolveBuildElapsedAnchorMs(job = {}) {
+  const status = trimText(job.status).toLowerCase();
+  const historyStart = Array.isArray(job.history) && job.history.length ? job.history[0]?.time : null;
+  const candidates =
+    status === "running"
+      ? [job.started_at, job.created_at, historyStart, job.updated_at]
+      : [job.created_at, historyStart, job.updated_at, job.started_at];
+
+  for (const candidate of candidates) {
+    const parsed = parseTimestampMs(candidate);
+    if (parsed !== null) return parsed;
+  }
+  return state.buildElapsedAnchorMs ?? null;
+}
+
+function resolveBuildElapsedSeconds(job = {}) {
+  const serverElapsed = numberOrNull(job.elapsed_seconds);
+  const status = trimText(job.status).toLowerCase();
+  if (status !== "queued" && status !== "running") {
+    return serverElapsed;
+  }
+
+  const anchorMs = resolveBuildElapsedAnchorMs(job);
+  if (anchorMs === null) {
+    return serverElapsed;
+  }
+
+  const clientElapsed = Math.max((Date.now() - anchorMs) / 1000, 0);
+  const roundedClientElapsed = Math.round(clientElapsed * 10) / 10;
+  if (serverElapsed === null) {
+    return roundedClientElapsed;
+  }
+  return Math.max(serverElapsed, roundedClientElapsed);
+}
+
+function stopBuildElapsedTicker() {
+  if (state.buildElapsedTimer) {
+    window.clearInterval(state.buildElapsedTimer);
+    state.buildElapsedTimer = null;
+  }
+  state.buildElapsedAnchorMs = null;
+  state.buildElapsedStatus = "";
+}
+
+function syncBuildElapsedTicker(job = {}) {
+  if (!indexBuildElapsed) {
+    stopBuildElapsedTicker();
+    return;
+  }
+  const status = trimText(job.status).toLowerCase();
+  if (status !== "queued" && status !== "running") {
+    stopBuildElapsedTicker();
+    return;
+  }
+
+  const anchorMs = resolveBuildElapsedAnchorMs(job);
+  if (anchorMs !== null) {
+    state.buildElapsedAnchorMs = anchorMs;
+  }
+  state.buildElapsedStatus = status;
+
+  if (state.buildElapsedTimer || state.buildElapsedAnchorMs === null) {
+    return;
+  }
+
+  state.buildElapsedTimer = window.setInterval(() => {
+    if (!indexBuildElapsed || state.buildElapsedAnchorMs === null) return;
+    const anchorIso = new Date(state.buildElapsedAnchorMs).toISOString();
+    const liveElapsedSeconds = resolveBuildElapsedSeconds(
+      state.buildElapsedStatus === "running"
+        ? { status: "running", started_at: anchorIso }
+        : { status: "queued", created_at: anchorIso }
+    );
+    if (liveElapsedSeconds !== null && liveElapsedSeconds !== undefined) {
+      indexBuildElapsed.textContent = `已耗时 ${formatEtaSeconds(liveElapsedSeconds)}`;
+    }
+  }, 250);
+}
+
+const messageAutoHideTimers = new WeakMap();
 
 function formatPercentValue(value) {
   if (value === null || value === undefined || value === "") return "--";
@@ -328,6 +452,10 @@ function numberOrNull(value) {
 
 function trimText(value) {
   return String(value || "").trim();
+}
+
+function normalizePathToken(value) {
+  return trimText(value).replaceAll("\\", "/").replace(/\/+/g, "/").toLowerCase();
 }
 
 function positiveIntegerOrNull(value) {
@@ -444,8 +572,17 @@ function buildBaseItemStyle(point) {
   return { color: "rgba(125,211,252,0.42)", opacity: 0.42 };
 }
 
-function setMessage(element, message, tone = "neutral", classSuffix = "") {
+function clearMessageAutoHide(element) {
+  const timer = messageAutoHideTimers.get(element);
+  if (timer) {
+    window.clearTimeout(timer);
+    messageAutoHideTimers.delete(element);
+  }
+}
+
+function setMessage(element, message, tone = "neutral", classSuffix = "", autoHideMs = 0) {
   if (!element) return;
+  clearMessageAutoHide(element);
   const className =
     tone === "success"
       ? "status-message success-message"
@@ -454,6 +591,17 @@ function setMessage(element, message, tone = "neutral", classSuffix = "") {
         : "status-message neutral-message";
   element.className = `${className}${classSuffix ? ` ${classSuffix}` : ""}`;
   element.textContent = message;
+  element.classList.remove("d-none");
+  element.hidden = false;
+  if (autoHideMs > 0) {
+    const timer = window.setTimeout(() => {
+      element.textContent = "";
+      element.classList.add("d-none");
+      element.hidden = true;
+      messageAutoHideTimers.delete(element);
+    }, autoHideMs);
+    messageAutoHideTimers.set(element, timer);
+  }
 }
 
 function setAiAssistantDockVisible(visible) {
@@ -794,6 +942,9 @@ function clearBuildPolling() {
     window.clearInterval(state.buildPollTimer);
     state.buildPollTimer = null;
   }
+  state.buildPollToken += 1;
+  state.buildPollInFlight = false;
+  stopBuildElapsedTicker();
   state.buildJobId = null;
   state.buildJobContextPath = "";
 }
@@ -1812,41 +1963,27 @@ function renderIndexBuildTimeline(history = []) {
 }
 
 function updateIndexProgress(job) {
-  const progress = Math.max(0, Math.min(100, Number(job.progress_pct) || 0));
-  indexBuildProgressBar.style.width = `${progress.toFixed(1)}%`;
-  indexBuildProgressBar.textContent = `${progress.toFixed(1)}%`;
-  indexBuildProgressBar.setAttribute("aria-valuenow", progress.toFixed(1));
+  const status = trimText(job.status).toLowerCase();
+  const isComplete = status === "completed";
+  const isFailed = status === "failed";
+  const stageLabel = isComplete ? "处理完成" : isFailed ? "处理失败" : "未处理完成";
+  const barText = stageLabel;
 
-  const stageLabel = humanizeBuildStage(job.stage);
-  const elapsedText =
-    job.elapsed_seconds !== null && job.elapsed_seconds !== undefined
-      ? `已耗时 ${formatEtaSeconds(job.elapsed_seconds)}`
-      : "已耗时 --";
-  if (indexBuildStageLabel) indexBuildStageLabel.textContent = stageLabel;
-  if (indexBuildElapsed) indexBuildElapsed.textContent = elapsedText;
-  if (indexBuildProcessed) {
-    const totalText =
-      job.total_cells !== null && job.total_cells !== undefined ? formatNumber(job.total_cells) : "--";
-    indexBuildProcessed.textContent = `${formatNumber(job.processed_cells || 0)} / ${totalText}`;
-  }
-  if (indexBuildRate) {
-    indexBuildRate.textContent =
-      job.rate_cells_per_second !== null && job.rate_cells_per_second !== undefined
-        ? `${formatNumber(job.rate_cells_per_second)} cells/s`
-        : "--";
-  }
-  if (indexBuildEta) {
-    indexBuildEta.textContent =
-      job.eta_seconds !== null && job.eta_seconds !== undefined ? formatEtaSeconds(job.eta_seconds) : "--";
-  }
+  indexBuildProgressBar.style.width = "100%";
+  indexBuildProgressBar.textContent = barText;
+  indexBuildProgressBar.setAttribute("aria-valuenow", isComplete ? "100" : "0");
+  indexBuildProgressBar.classList.remove("is-pending", "is-complete", "is-failed");
+  indexBuildProgressBar.classList.add(isComplete ? "is-complete" : isFailed ? "is-failed" : "is-pending");
 
-  const meta = [];
-  if (job.message) meta.push(job.message);
-  if (job.total_cells !== null && job.total_cells !== undefined) {
-    meta.push(`已处理 ${formatNumber(job.processed_cells || 0)} / ${formatNumber(job.total_cells)}`);
+  if (indexBuildStageLabel) {
+    indexBuildStageLabel.textContent = humanizeBuildStage(job.stage || status || "queued");
   }
-  indexBuildProgressMeta.textContent = meta.join(" | ");
-  renderIndexBuildTimeline(job.history);
+  if (indexBuildElapsed) indexBuildElapsed.textContent = "";
+  if (indexBuildProcessed) indexBuildProcessed.textContent = "";
+  if (indexBuildRate) indexBuildRate.textContent = "";
+  if (indexBuildEta) indexBuildEta.textContent = "";
+
+  indexBuildProgressMeta.textContent = job.message || barText;
 }
 
 function activeFilters() {
@@ -1860,8 +1997,8 @@ function activeFilters() {
 
 function positiveTopK(inputElement) {
   const topK = Number(inputElement.value);
-  if (!Number.isInteger(topK) || topK < 1 || topK > 100) {
-    throw new Error("Top-K must be an integer between 1 and 100");
+  if (!Number.isInteger(topK) || topK < 1 || topK > 10000) {
+    throw new Error("Top-K must be an integer between 1 and 10000");
   }
   return topK;
 }
@@ -1886,8 +2023,11 @@ function ensureIndexSelected() {
   }
 }
 
-function isBuildContextCurrent() {
-  return trimText(state.currentDataPath) === trimText(state.buildJobContextPath);
+function isBuildContextCurrent(job = null) {
+  if (job?.job_id && state.buildJobId && trimText(job.job_id) === trimText(state.buildJobId)) {
+    return true;
+  }
+  return normalizePathToken(state.currentDataPath) === normalizePathToken(state.buildJobContextPath);
 }
 
 function focusResultRow(cellId) {
@@ -2377,6 +2517,12 @@ function renderHistoryCards(indexes) {
   historyCards.innerHTML = indexes
     .map((item) => {
       const statusLabel = item.is_active ? "Active" : "History";
+      const parameterRows = historyIndexParamEntries(item)
+        .map(
+          ([label, value]) =>
+            `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value === null || value === undefined || value === "" ? "--" : String(value))}</dd>`
+        )
+        .join("");
       return `
         <article class="history-card">
           <button
@@ -2396,6 +2542,7 @@ function renderHistoryCards(indexes) {
             <dt>Format</dt><dd>${escapeHtml(item.source_format || "-")}</dd>
             <dt>Index Type</dt><dd>${escapeHtml(humanizeIndexType(item.index_type))}</dd>
             <dt>Metric</dt><dd>${escapeHtml(humanizeDistanceMetric(item.distance_metric, item.effective_metric))}</dd>
+            ${parameterRows}
             <dt>Cells</dt><dd>${escapeHtml(formatNumber(item.cell_count))}</dd>
             <dt>Vector Dim</dt><dd>${escapeHtml(formatNumber(item.vector_dim))}</dd>
             <dt>Build Time</dt><dd>${escapeHtml(formatTime(item.build_time_ms))}</dd>
@@ -2473,7 +2620,7 @@ async function deleteHistoryIndex(indexId) {
     state.activeIndex = nextActiveIndex;
   }
   await loadHistoryIndexes();
-  setMessage(hubHistoryMessage, `索引 ${indexRecord.index_name} 已删除`, "success");
+  setMessage(hubHistoryMessage, `索引 ${indexRecord.index_name} 已删除`, "success", "", 10000);
 }
 
 async function loadHubData() {
@@ -2534,15 +2681,18 @@ async function enterCorePage({ dataPath, info, indexRecord }) {
   showMainView();
   resetMainPageOutputs();
   setIndexProgressVisible(false);
-  indexBuildProgressBar.style.width = "0%";
-  indexBuildProgressBar.textContent = "0%";
+  stopBuildElapsedTicker();
+  indexBuildProgressBar.style.width = "100%";
+  indexBuildProgressBar.textContent = "未处理完成";
   indexBuildProgressBar.setAttribute("aria-valuenow", "0");
+  indexBuildProgressBar.classList.remove("is-pending", "is-complete", "is-failed");
+  indexBuildProgressBar.classList.add("is-pending");
   indexBuildProgressMeta.textContent = "";
-  if (indexBuildStageLabel) indexBuildStageLabel.textContent = "等待任务启动";
-  if (indexBuildElapsed) indexBuildElapsed.textContent = "已耗时 --";
-  if (indexBuildProcessed) indexBuildProcessed.textContent = "0 / --";
-  if (indexBuildRate) indexBuildRate.textContent = "--";
-  if (indexBuildEta) indexBuildEta.textContent = "--";
+  if (indexBuildStageLabel) indexBuildStageLabel.textContent = "任务状态";
+  if (indexBuildElapsed) indexBuildElapsed.textContent = "";
+  if (indexBuildProcessed) indexBuildProcessed.textContent = "";
+  if (indexBuildRate) indexBuildRate.textContent = "";
+  if (indexBuildEta) indexBuildEta.textContent = "";
   renderIndexBuildTimeline([]);
 
   if (state.activeIndex?.id) {
@@ -2663,7 +2813,7 @@ async function fetchActiveIndexRecord(preferredId = null) {
 }
 
 async function handleBuildJobUpdate(job) {
-  const applyToCurrentView = isBuildContextCurrent();
+  const applyToCurrentView = isBuildContextCurrent(job);
   if (applyToCurrentView) {
     setIndexProgressVisible(true);
     updateIndexProgress(job);
@@ -2716,21 +2866,30 @@ async function handleBuildJobUpdate(job) {
 async function pollBuildJob(jobId) {
   clearBuildPolling();
   state.buildJobId = jobId;
+  const pollToken = state.buildPollToken;
   savePersistedBuildJob({ jobId, dataPath: state.buildJobContextPath || state.currentDataPath });
 
   const pollOnce = async () => {
-    if (!state.buildJobId) return;
+    if (!state.buildJobId || pollToken !== state.buildPollToken || state.buildPollInFlight) return;
+    state.buildPollInFlight = true;
     try {
       const data = await getJson(`/api/index/build/jobs/${encodeURIComponent(jobId)}`);
+      if (pollToken !== state.buildPollToken || state.buildJobId !== jobId) return;
       const job = data.job || {};
       await handleBuildJobUpdate(job);
+      if (pollToken !== state.buildPollToken || state.buildJobId !== jobId) return;
       if (job.status === "completed" || job.status === "failed") {
         clearBuildPolling();
       }
     } catch (error) {
+      if (pollToken !== state.buildPollToken || state.buildJobId !== jobId) return;
       clearBuildPolling();
       setBadgeState("is-error", "Progress Error", "Failed to get build progress");
       setMessage(indexStatus, error.message, "error");
+    } finally {
+      if (pollToken === state.buildPollToken) {
+        state.buildPollInFlight = false;
+      }
     }
   };
 
@@ -2754,10 +2913,10 @@ async function buildIndexFromMain() {
   setCurrentDataset(path);
   state.activeIndex = null;
   state.buildJobContextPath = path;
-  setBadgeState("is-loading", "Building Index", "Submitting async build task");
-  setMessage(indexStatus, "索引构建任务已提交，可在下方查看实时进度。", "neutral");
-  setIndexProgressVisible(true);
-  updateIndexProgress({
+  const queuedAt = new Date().toISOString();
+  const localQueuedJob = {
+    job_id: "",
+    status: "queued",
     progress_pct: 0,
     stage: "queued",
     message: "任务已提交，等待进入执行队列",
@@ -2766,8 +2925,15 @@ async function buildIndexFromMain() {
     elapsed_seconds: 0,
     rate_cells_per_second: null,
     eta_seconds: null,
-    history: [{ stage: "queued", text: "构建任务已创建，等待执行", time: new Date().toISOString() }],
-  });
+    created_at: queuedAt,
+    updated_at: queuedAt,
+    started_at: null,
+    history: [{ stage: "queued", text: "构建任务已创建，等待执行", time: queuedAt }],
+  };
+  setBadgeState("is-loading", "Building Index", "Submitting async build task");
+  setMessage(indexStatus, "索引构建任务已提交，可在下方查看实时进度。", "neutral");
+  setIndexProgressVisible(true);
+  updateIndexProgress(localQueuedJob);
 
   loadMetadataOptionsForCurrentDataset().catch(() => undefined);
 
@@ -2801,6 +2967,13 @@ async function buildIndexFromMain() {
     if (!response.job_id) {
       throw new Error("Build job id missing");
     }
+    updateIndexProgress({
+      ...localQueuedJob,
+      job_id: response.job_id,
+      status: response.status || "queued",
+      stage: response.stage || "queued",
+      updated_at: new Date().toISOString(),
+    });
     await pollBuildJob(response.job_id);
   } catch (error) {
     clearBuildPolling();
