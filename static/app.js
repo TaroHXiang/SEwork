@@ -142,6 +142,8 @@ const qualityMetricButtons = Array.from(document.querySelectorAll(".quality-metr
 
 const umapLegend = document.querySelector("#umapLegend");
 const resetUmapBtn = document.querySelector("#resetUmapBtn");
+const exportUmapCsvBtn = document.querySelector("#exportUmapCsvBtn");
+const exportUmapJsonBtn = document.querySelector("#exportUmapJsonBtn");
 const umapPreviewLevel = document.querySelector("#umapPreviewLevel");
 const umapColorMode = document.querySelector("#umapColorMode");
 const umapInfoTotal = document.querySelector("#umapInfoTotal");
@@ -1044,6 +1046,63 @@ function postJson(url, payload) {
     method: "POST",
     body: JSON.stringify(payload || {}),
   });
+}
+
+function downloadBlob(content, filename, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+function safeExportName(pathValue) {
+  const shortName = shortPath(pathValue).split("/").pop() || "dataset";
+  const stem = shortName.replace(/\.[^.]+$/, "") || "dataset";
+  return stem.replace(/[^A-Za-z0-9_.-]+/g, "_").replace(/^[_\-.]+|[_\-.]+$/g, "") || "dataset";
+}
+
+function exportTimestamp() {
+  return new Date().toISOString().replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "_");
+}
+
+function buildUmapExportRows(points) {
+  return (points || []).map((point) => {
+    const row = {
+      cell_id: point.cell_id || "",
+      umap_x: point.x,
+      umap_y: point.y,
+    };
+    Object.entries(point.metadata || {}).forEach(([key, value]) => {
+      row[`metadata_${key}`] = value;
+    });
+    return row;
+  });
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function rowsToCsv(rows) {
+  const baseColumns = ["cell_id", "umap_x", "umap_y"];
+  const metadataColumns = Array.from(
+    new Set(rows.flatMap((row) => Object.keys(row).filter((key) => key.startsWith("metadata_"))))
+  ).sort();
+  const columns = [...baseColumns, ...metadataColumns];
+  return [
+    columns.join(","),
+    ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(",")),
+  ].join("\r\n");
 }
 
 function showAuthView() {
@@ -3171,6 +3230,37 @@ async function loadUmapForCurrentDataset() {
   }
 }
 
+async function exportUmapForCurrentDataset(fileFormat) {
+  if (!state.currentDataPath) {
+    setMessage(queryStatus, "No data path for UMAP export", "error");
+    return;
+  }
+
+  const format = fileFormat === "json" ? "json" : "csv";
+  const button = format === "json" ? exportUmapJsonBtn : exportUmapCsvBtn;
+  const rows = buildUmapExportRows(getCurrentScopePoints());
+  if (!rows.length) {
+    setMessage(queryStatus, "No UMAP points to export", "error");
+    return;
+  }
+
+  if (button) button.disabled = true;
+  setMessage(queryStatus, `Exporting UMAP ${format.toUpperCase()}...`, "neutral");
+  try {
+    const filename = `${safeExportName(state.currentDataPath)}_umap_${exportTimestamp()}.${format}`;
+    if (format === "json") {
+      downloadBlob(JSON.stringify(rows, null, 2), filename, "application/json;charset=utf-8");
+    } else {
+      downloadBlob(rowsToCsv(rows), filename, "text/csv;charset=utf-8");
+    }
+    setMessage(queryStatus, `UMAP exported: ${filename}, ${formatNumber(rows.length)} points`, "success");
+  } catch (error) {
+    setMessage(queryStatus, `UMAP export failed: ${error.message}`, "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function inspectDatasetFromMain() {
   const path = trimText(dataPathInput.value);
   if (!path) {
@@ -3776,6 +3866,22 @@ searchByVectorBtn.addEventListener("click", () => {
 });
 
 resetUmapBtn.addEventListener("click", resetUmapView);
+
+if (exportUmapCsvBtn) {
+  exportUmapCsvBtn.addEventListener("click", () => {
+    exportUmapForCurrentDataset("csv").catch((error) => {
+      setMessage(queryStatus, error.message, "error");
+    });
+  });
+}
+
+if (exportUmapJsonBtn) {
+  exportUmapJsonBtn.addEventListener("click", () => {
+    exportUmapForCurrentDataset("json").catch((error) => {
+      setMessage(queryStatus, error.message, "error");
+    });
+  });
+}
 
 if (umapPreviewLevel) {
   umapPreviewLevel.addEventListener("change", () => {

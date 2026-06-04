@@ -750,6 +750,8 @@
                       <option value="cell_type">按细胞类型着色</option>
                       <option value="disease">按疾病状态着色</option>
                     </select>
+                    <button id="exportUmapCsvBtn" type="button" class="btn action-btn secondary-btn btn-sm">Export CSV</button>
+                    <button id="exportUmapJsonBtn" type="button" class="btn action-btn secondary-btn btn-sm">Export JSON</button>
                     <button id="resetUmapBtn" type="button" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
                   </div>
                 </div>
@@ -1009,6 +1011,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=umap-export-client-3"></script>
   </body>
 </html>
