@@ -344,7 +344,7 @@ body {
 }
 
 .index-progress-shell {
-  height: 16px;
+  height: 18px;
   background: rgba(15, 23, 42, 0.72);
   border: 1px solid var(--border-color);
   border-radius: 999px;
@@ -355,7 +355,21 @@ body {
   font-size: 11px;
   font-weight: 700;
   color: #f8fafc;
-  background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 55%, #10b981 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.index-progress-bar.is-pending {
+  background: linear-gradient(90deg, #ef4444 0%, #dc2626 100%);
+}
+
+.index-progress-bar.is-complete {
+  background: linear-gradient(90deg, #22c55e 0%, #16a34a 100%);
+}
+
+.index-progress-bar.is-failed {
+  background: linear-gradient(90deg, #991b1b 0%, #7f1d1d 100%);
 }
 
 .index-progress-meta {

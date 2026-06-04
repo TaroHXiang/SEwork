@@ -263,10 +263,19 @@ class CellVectorIndex:
         return bool(response.get("exists"))
 
     def delete_collection(self, collection_name: str) -> bool:
-        response = self._request_json(
-            method="DELETE",
-            path=f"/collections/{quote(collection_name)}",
-        )
+        try:
+            response = self._request_json(
+                method="DELETE",
+                path=f"/collections/{quote(collection_name)}",
+            )
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "404 not found" in message or "requested url was not found on the server" in message:
+                raise RuntimeError(
+                    "FAISS service is running an older code version and does not expose collection deletion yet. "
+                    "Please restart the `faiss` container, then try again."
+                ) from exc
+            raise
         deleted = bool(response.get("deleted"))
         if deleted and self.collection_name == collection_name:
             self.clear_active_collection()

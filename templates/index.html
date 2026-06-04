@@ -305,43 +305,17 @@
             <div id="indexStatus" class="status-message neutral-message">等待构建</div>
             <div id="indexBuildProgress" class="index-build-progress d-none" aria-live="polite">
               <div class="index-progress-header-row">
-                <strong id="indexBuildStageLabel" class="index-progress-stage">等待任务启动</strong>
-                <span id="indexBuildElapsed" class="index-progress-elapsed">已耗时 --</span>
+                <strong id="indexBuildStageLabel" class="index-progress-stage">任务状态</strong>
               </div>
               <div class="progress index-progress-shell">
                 <div
                   id="indexBuildProgressBar"
                   class="progress-bar index-progress-bar"
                   role="progressbar"
-                  style="width: 0%"
-                >0%</div>
+                  style="width: 100%"
+                >未处理完成</div>
               </div>
               <div id="indexBuildProgressMeta" class="index-progress-meta"></div>
-              <div class="index-progress-stats">
-                <div class="progress-stat-card">
-                  <span class="progress-stat-label">已处理</span>
-                  <strong id="indexBuildProcessed">0 / --</strong>
-                </div>
-                <div class="progress-stat-card">
-                  <span class="progress-stat-label">处理速度</span>
-                  <strong id="indexBuildRate">--</strong>
-                </div>
-                <div class="progress-stat-card">
-                  <span class="progress-stat-label">预计剩余</span>
-                  <strong id="indexBuildEta">--</strong>
-                </div>
-              </div>
-              <div class="index-progress-timeline">
-                <div class="index-progress-timeline-title">构建过程</div>
-                <ul id="indexBuildTimeline" class="build-timeline">
-                  <li class="build-timeline-item">
-                    <span class="build-timeline-dot"></span>
-                    <div>
-                      <div class="build-timeline-text">任务尚未开始</div>
-                    </div>
-                  </li>
-                </ul>
-              </div>
             </div>
 
             <section class="subpanel mt-4">
@@ -425,7 +399,7 @@
                   </div>
                   <div>
                     <label class="form-label" for="topKId">Top-K</label>
-                    <input id="topKId" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
+                    <input id="topKId" class="form-control dashboard-input" type="number" min="1" max="10000" value="10">
                   </div>
                   <div class="query-submit-cell">
                     <button id="searchByIdBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>
@@ -441,7 +415,7 @@
                   </div>
                   <div>
                     <label class="form-label" for="topKVector">Top-K</label>
-                    <input id="topKVector" class="form-control dashboard-input" type="number" min="1" max="100" value="10">
+                    <input id="topKVector" class="form-control dashboard-input" type="number" min="1" max="10000" value="10">
                   </div>
                   <div class="query-submit-cell">
                     <button id="searchByVectorBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>

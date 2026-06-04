@@ -576,8 +576,27 @@ def _run_index_build_job_legacy(job_id: str):
 
 
 def _start_index_build_job(job_id: str):
-    worker = Thread(target=_run_index_build_job, args=(job_id,), daemon=True)
+    worker = Thread(target=_run_index_build_job_guarded, args=(job_id,), daemon=True)
     worker.start()
+
+
+def _run_index_build_job_guarded(job_id: str):
+    try:
+        _run_index_build_job(job_id)
+    except Exception as exc:
+        app.logger.exception("Background index build job crashed: %s", job_id)
+        try:
+            _update_index_build_job(
+                job_id,
+                status="failed",
+                stage="failed",
+                message="index build worker crashed",
+                error=str(exc),
+                finished_at=_utc_now_iso(),
+            )
+            _append_index_build_history(job_id, stage="failed", text=f"build worker crashed: {exc}")
+        except Exception:
+            app.logger.exception("Failed to persist build crash state: %s", job_id)
 
 
 def _public_index_build_job(job: dict) -> dict:
