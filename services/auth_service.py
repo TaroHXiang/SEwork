@@ -94,6 +94,10 @@ class UserStore:
                     gene_count INT,
                     vector_dim INT,
                     embedding_key VARCHAR(128),
+                    index_type VARCHAR(32) NOT NULL,
+                    distance_metric VARCHAR(32) NOT NULL,
+                    effective_metric VARCHAR(32) NOT NULL,
+                    quantization_config JSON NULL,
                     metadata_keys JSON NOT NULL,
                     hnsw_params JSON NOT NULL,
                     search_params JSON NOT NULL,
@@ -116,8 +120,12 @@ class UserStore:
                     user_id INT NOT NULL,
                     data_path TEXT NOT NULL,
                     index_name VARCHAR(64) NOT NULL,
+                    index_type VARCHAR(32) NOT NULL,
+                    distance_metric VARCHAR(32) NOT NULL,
+                    effective_metric VARCHAR(32) NOT NULL,
                     hnsw_params JSON NOT NULL,
                     search_params JSON NOT NULL,
+                    quantization_config JSON NULL,
                     activate TINYINT(1) NOT NULL DEFAULT 1,
                     status VARCHAR(32) NOT NULL,
                     stage VARCHAR(64) NOT NULL,
@@ -143,6 +151,88 @@ class UserStore:
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn):
+        migration_columns = [
+            ("user_indexes", "index_type", "VARCHAR(32) NOT NULL DEFAULT 'hnsw'"),
+            ("user_indexes", "distance_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
+            ("user_indexes", "effective_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
+            ("user_indexes", "quantization_config", "JSON NULL"),
+            ("index_build_jobs", "index_type", "VARCHAR(32) NOT NULL DEFAULT 'hnsw'"),
+            ("index_build_jobs", "distance_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
+            ("index_build_jobs", "effective_metric", "VARCHAR(32) NOT NULL DEFAULT 'cosine'"),
+            ("index_build_jobs", "quantization_config", "JSON NULL"),
+        ]
+        for table_name, column_name, column_sql in migration_columns:
+            if not self._column_exists(conn, table_name, column_name):
+                conn.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}"
+                )
+
+        conn.execute(
+            """
+            UPDATE user_indexes
+            SET index_type = 'hnsw'
+            WHERE index_type IS NULL OR index_type = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE user_indexes
+            SET distance_metric = 'cosine'
+            WHERE distance_metric IS NULL OR distance_metric = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE user_indexes
+            SET effective_metric = 'cosine'
+            WHERE effective_metric IS NULL OR effective_metric = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE user_indexes
+            SET quantization_config = JSON_OBJECT()
+            WHERE quantization_config IS NULL
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET index_type = 'hnsw'
+            WHERE index_type IS NULL OR index_type = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET distance_metric = 'cosine'
+            WHERE distance_metric IS NULL OR distance_metric = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET effective_metric = 'cosine'
+            WHERE effective_metric IS NULL OR effective_metric = ''
+            """
+        )
+        conn.execute(
+            """
+            UPDATE index_build_jobs
+            SET quantization_config = JSON_OBJECT()
+            WHERE quantization_config IS NULL
+            """
+        )
+
+    def _column_exists(self, conn, table_name, column_name):
+        row = conn.execute(
+            f"SHOW COLUMNS FROM {table_name} LIKE ?",
+            (column_name,),
+        ).fetchone()
+        return row is not None
 
     def mark_unfinished_build_jobs_failed(self, reason="service restarted before task finished"):
         now = self._now()
@@ -333,7 +423,8 @@ class UserStore:
                 """
                 SELECT
                     id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key, metadata_keys,
+                    cell_count, gene_count, vector_dim, embedding_key,
+                    index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
                 FROM user_indexes
@@ -350,7 +441,8 @@ class UserStore:
                 """
                 SELECT
                     id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key, metadata_keys,
+                    cell_count, gene_count, vector_dim, embedding_key,
+                    index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
                 FROM user_indexes
@@ -366,7 +458,8 @@ class UserStore:
                 """
                 SELECT
                     id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key, metadata_keys,
+                    cell_count, gene_count, vector_dim, embedding_key,
+                    index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
                 FROM user_indexes
@@ -383,7 +476,8 @@ class UserStore:
                 """
                 SELECT
                     id, user_id, index_name, collection_name, data_path, source_format,
-                    cell_count, gene_count, vector_dim, embedding_key, metadata_keys,
+                    cell_count, gene_count, vector_dim, embedding_key,
+                    index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                     hnsw_params, search_params, build_time_ms, is_active, status,
                     created_at, updated_at
                 FROM user_indexes
@@ -406,6 +500,10 @@ class UserStore:
         gene_count,
         vector_dim,
         embedding_key,
+        index_type,
+        distance_metric,
+        effective_metric,
+        quantization_config,
         metadata_keys,
         hnsw_params,
         search_params,
@@ -415,6 +513,7 @@ class UserStore:
     ):
         index_name = self._normalize_index_name(index_name)
         now = self._now()
+        quantization_json = json.dumps(quantization_config or {}, ensure_ascii=False)
         metadata_keys_json = json.dumps(list(metadata_keys or []), ensure_ascii=False)
         hnsw_params_json = json.dumps(hnsw_params or {}, ensure_ascii=False)
         search_params_json = json.dumps(search_params or {}, ensure_ascii=False)
@@ -430,11 +529,12 @@ class UserStore:
                     """
                     INSERT INTO user_indexes (
                         user_id, index_name, collection_name, data_path, source_format,
-                        cell_count, gene_count, vector_dim, embedding_key, metadata_keys,
+                        cell_count, gene_count, vector_dim, embedding_key,
+                        index_type, distance_metric, effective_metric, quantization_config, metadata_keys,
                         hnsw_params, search_params, build_time_ms, is_active, status,
                         created_at, updated_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
@@ -446,6 +546,10 @@ class UserStore:
                         int(gene_count),
                         int(vector_dim),
                         embedding_key,
+                        index_type,
+                        distance_metric,
+                        effective_metric,
+                        quantization_json,
                         metadata_keys_json,
                         hnsw_params_json,
                         search_params_json,
@@ -481,8 +585,22 @@ class UserStore:
             )
         return self.get_user_index(user_id, index_id)
 
-    def find_reusable_user_index(self, user_id, data_path, hnsw_params=None, search_params=None):
+    def find_reusable_user_index(
+        self,
+        user_id,
+        data_path,
+        index_type="hnsw",
+        distance_metric="cosine",
+        effective_metric="cosine",
+        quantization_config=None,
+        hnsw_params=None,
+        search_params=None,
+    ):
         normalized_path = str(data_path or "").strip()
+        target_index_type = str(index_type or "hnsw").strip().lower()
+        target_distance_metric = str(distance_metric or "cosine").strip().lower()
+        target_effective_metric = str(effective_metric or "cosine").strip().lower()
+        target_quantization = json.dumps(quantization_config or {}, ensure_ascii=False, sort_keys=True)
         target_hnsw = json.dumps(hnsw_params or {}, ensure_ascii=False, sort_keys=True)
         target_search = json.dumps(search_params or {}, ensure_ascii=False, sort_keys=True)
         indexes = self.list_user_indexes(user_id)
@@ -491,9 +609,16 @@ class UserStore:
                 continue
             if str(item.get("data_path") or "").strip() != normalized_path:
                 continue
+            if str(item.get("index_type") or "hnsw").strip().lower() != target_index_type:
+                continue
+            if str(item.get("distance_metric") or "cosine").strip().lower() != target_distance_metric:
+                continue
+            if str(item.get("effective_metric") or "cosine").strip().lower() != target_effective_metric:
+                continue
+            item_quantization = json.dumps(item.get("quantization_config") or {}, ensure_ascii=False, sort_keys=True)
             item_hnsw = json.dumps(item.get("hnsw_params") or {}, ensure_ascii=False, sort_keys=True)
             item_search = json.dumps(item.get("search_params") or {}, ensure_ascii=False, sort_keys=True)
-            if item_hnsw == target_hnsw and item_search == target_search:
+            if item_quantization == target_quantization and item_hnsw == target_hnsw and item_search == target_search:
                 return item
         return None
 
@@ -519,8 +644,12 @@ class UserStore:
         user_id,
         data_path,
         index_name,
+        index_type,
+        distance_metric,
+        effective_metric,
         hnsw_params,
         search_params,
+        quantization_config,
         activate,
         status,
         stage,
@@ -544,20 +673,25 @@ class UserStore:
             conn.execute(
                 """
                 INSERT INTO index_build_jobs (
-                    job_id, user_id, data_path, index_name, hnsw_params, search_params,
+                    job_id, user_id, data_path, index_name, index_type, distance_metric, effective_metric,
+                    hnsw_params, search_params, quantization_config,
                     activate, status, stage, message, progress_pct, processed_cells, total_cells,
                     elapsed_seconds, rate_cells_per_second, eta_seconds, dataset_summary, history,
                     result_json, error_text, created_at, updated_at, started_at, finished_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
                     user_id,
                     str(data_path),
                     index_name,
+                    index_type,
+                    distance_metric,
+                    effective_metric,
                     json.dumps(hnsw_params or {}, ensure_ascii=False),
                     json.dumps(search_params or {}, ensure_ascii=False),
+                    json.dumps(quantization_config or {}, ensure_ascii=False),
                     1 if bool(activate) else 0,
                     status,
                     stage,
@@ -587,6 +721,7 @@ class UserStore:
         updates = []
         values = []
         json_fields = {
+            "quantization_config",
             "hnsw_params",
             "search_params",
             "dataset_summary",
@@ -660,6 +795,10 @@ class UserStore:
     def _row_to_user_index(self, row):
         item = dict(row)
         item["is_active"] = bool(item["is_active"])
+        item["index_type"] = item.get("index_type") or "hnsw"
+        item["distance_metric"] = item.get("distance_metric") or "cosine"
+        item["effective_metric"] = item.get("effective_metric") or "cosine"
+        item["quantization_config"] = json.loads(item.get("quantization_config") or "{}")
         item["metadata_keys"] = json.loads(item.get("metadata_keys") or "[]")
         item["hnsw_params"] = json.loads(item.get("hnsw_params") or "{}")
         item["search_params"] = json.loads(item.get("search_params") or "{}")
@@ -676,6 +815,10 @@ class UserStore:
             float(item["rate_cells_per_second"]) if item.get("rate_cells_per_second") is not None else None
         )
         item["eta_seconds"] = float(item["eta_seconds"]) if item.get("eta_seconds") is not None else None
+        item["index_type"] = item.get("index_type") or "hnsw"
+        item["distance_metric"] = item.get("distance_metric") or "cosine"
+        item["effective_metric"] = item.get("effective_metric") or "cosine"
+        item["quantization_config"] = json.loads(item.get("quantization_config") or "{}")
         item["hnsw_params"] = json.loads(item.get("hnsw_params") or "{}")
         item["search_params"] = json.loads(item.get("search_params") or "{}")
         item["dataset_summary"] = json.loads(item.get("dataset_summary") or "null")

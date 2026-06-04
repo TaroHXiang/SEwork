@@ -1,49 +1,32 @@
 from __future__ import annotations
 
-import re
+import json
 from dataclasses import dataclass
 from pathlib import Path
-from time import perf_counter
 from typing import Callable, Iterable
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urljoin
+from urllib.request import Request, urlopen
 
-import numpy as np
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    FieldCondition,
-    Filter,
-    HnswConfigDiff,
-    MatchValue,
-    PayloadSchemaType,
-    PointStruct,
-    SearchParams,
-    VectorParams,
+from config import BASE_DIR, FAISS_SERVICE_URL, VECTOR_INDEX_COLLECTION
+from services.data_loader import CellVectorDataset
+from services.faiss_engine import (
+    DEFAULT_DISTANCE_METRIC,
+    DEFAULT_INDEX_TYPE,
+    SearchResult,
+    build_collection_name,
+    normalize_requested_build_options,
 )
 
-from config import QDRANT_COLLECTION, QDRANT_PATH, QDRANT_URL
-from services.data_loader import CellVectorDataset
 
-
-DEFAULT_HNSW_PARAMS = {
-    "m": 16,
-    "ef_construct": 128,
-}
-DEFAULT_SEARCH_PARAMS = {
-    "hnsw_ef": 128,
-    "exact": False,
-}
-
-
-@dataclass
-class SearchResult:
-    results: list[dict]
-    query_time_ms: float
+DEFAULT_HTTP_TIMEOUT_SECONDS = 30
+DEFAULT_BUILD_TIMEOUT_SECONDS = 1800
 
 
 class CellVectorIndex:
-    def __init__(self, collection_name: str = QDRANT_COLLECTION):
+    def __init__(self, collection_name: str = VECTOR_INDEX_COLLECTION):
         self.default_collection_name = collection_name
-        self.client = _create_client()
+        self.base_url = str(FAISS_SERVICE_URL or "").rstrip("/")
         self.collection_name: str | None = None
         self.dataset_summary: dict | None = None
         self.vector_dim: int | None = None
@@ -56,62 +39,59 @@ class CellVectorIndex:
         self,
         dataset: CellVectorDataset,
         collection_name: str,
+        index_type: str = DEFAULT_INDEX_TYPE,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+        quantization_config: dict | None = None,
         hnsw_params: dict | None = None,
         search_params: dict | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> dict:
-        collection_name = _normalize_collection_name(collection_name)
-        resolved_hnsw = _resolve_hnsw_params(hnsw_params)
-        resolved_search = _resolve_search_params(search_params)
-        vector_dim = dataset.vector_dim
+        requested_options = normalize_requested_build_options(
+            index_type=index_type,
+            distance_metric=distance_metric,
+            quantization_config=quantization_config,
+            hnsw_params=hnsw_params,
+            search_params=search_params,
+        )
+        service_data_path = _resolve_service_data_path(dataset.source_path)
 
-        self._reset_collection(collection_name, vector_dim, resolved_hnsw)
         if progress_callback is not None:
             progress_callback(0, dataset.cell_count)
 
-        batch_size = 1000
-        for start in range(0, dataset.cell_count, batch_size):
-            points = [
-                PointStruct(
-                    id=index,
-                    vector=vector.astype(float).tolist(),
-                    payload={
-                        "cell_id": cell_id,
-                        "viz": {
-                            "x": float(viz_point[0]),
-                            "y": float(viz_point[1]),
-                        },
-                        "metadata": metadata,
-                    },
-                )
-                for index, (cell_id, vector, metadata, viz_point) in enumerate(
-                    zip(
-                        dataset.cell_ids[start : start + batch_size],
-                        dataset.vectors[start : start + batch_size],
-                        dataset.metadata[start : start + batch_size],
-                        dataset.visualization_points[start : start + batch_size],
-                    ),
-                    start=start,
-                )
-            ]
-            self.client.upsert(
-                collection_name=collection_name,
-                points=points,
-            )
-            if progress_callback is not None:
-                processed = min(start + len(points), dataset.cell_count)
-                progress_callback(processed, dataset.cell_count)
+        payload = {
+            "collection_name": collection_name,
+            "data_path": service_data_path,
+            "index_type": requested_options["index_type"],
+            "distance_metric": requested_options["distance_metric"],
+            "quantization_config": requested_options["quantization_config"],
+            "hnsw_params": requested_options["hnsw_params"],
+            "search_params": requested_options["search_params"],
+        }
+        response = self._request_json(
+            method="POST",
+            path="/collections/build",
+            payload=payload,
+            timeout=DEFAULT_BUILD_TIMEOUT_SECONDS,
+        )
 
-        self._create_payload_indexes(collection_name, dataset.metadata_fields)
+        if progress_callback is not None:
+            progress_callback(dataset.cell_count, dataset.cell_count)
+
+        dataset_summary = response.get("dataset_summary") or {}
         self.set_active_collection(
-            collection_name=collection_name,
-            vector_dim=vector_dim,
-            dataset_summary=dataset.summary(),
+            collection_name=response["collection"],
+            vector_dim=int(dataset_summary.get("vector_dim") or dataset.vector_dim),
+            dataset_summary=dataset_summary,
         )
         return {
-            "collection": collection_name,
-            "hnsw_params": resolved_hnsw,
-            "search_params": resolved_search,
+            "collection": response["collection"],
+            "index_type": response["index_type"],
+            "distance_metric": response["distance_metric"],
+            "effective_metric": response["effective_metric"],
+            "quantization_config": response.get("quantization_config") or {},
+            "resolved_quantization_config": response.get("resolved_quantization_config") or {},
+            "hnsw_params": response.get("hnsw_params") or {},
+            "search_params": response.get("search_params") or {},
         }
 
     def get_visualization_points(
@@ -120,73 +100,14 @@ class CellVectorIndex:
         limit: int = 10000,
         filters: dict[str, str] | None = None,
     ) -> dict:
-        if limit < 1 or limit > 100000:
-            raise ValueError("limit must be between 1 and 100000")
-
-        query_filter = _build_filter(filters)
-        count_result = self.client.count(
-            collection_name=collection_name,
-            count_filter=query_filter,
-            exact=False,
+        return self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/visualization",
+            payload={
+                "limit": limit,
+                "filters": filters or {},
+            },
         )
-        total_points = int(count_result.count)
-
-        points = []
-        offset = None
-        batch_size = 1000
-        while len(points) < limit:
-            page_size = min(batch_size, limit - len(points))
-            records, next_offset = self.client.scroll(
-                collection_name=collection_name,
-                scroll_filter=query_filter,
-                limit=page_size,
-                offset=offset,
-                with_payload=True,
-                with_vectors=True,
-            )
-            if not records:
-                break
-
-            for record in records:
-                payload = record.payload or {}
-                viz = payload.get("viz") or {}
-                metadata = payload.get("metadata") or {}
-                if "x" in viz and "y" in viz:
-                    x_axis = float(viz.get("x", 0.0))
-                    y_axis = float(viz.get("y", 0.0))
-                else:
-                    raw_vector = record.vector
-                    if isinstance(raw_vector, dict):
-                        raw_vector = next(iter(raw_vector.values()), None)
-                    if isinstance(raw_vector, list) and len(raw_vector) >= 2:
-                        x_axis = float(raw_vector[0])
-                        y_axis = float(raw_vector[1])
-                    elif isinstance(raw_vector, list) and len(raw_vector) == 1:
-                        x_axis = float(raw_vector[0])
-                        y_axis = 0.0
-                    else:
-                        x_axis = 0.0
-                        y_axis = 0.0
-                points.append(
-                    {
-                        "cell_id": payload.get("cell_id"),
-                        "x": x_axis,
-                        "y": y_axis,
-                        "metadata": metadata,
-                    }
-                )
-                if len(points) >= limit:
-                    break
-
-            if next_offset is None:
-                break
-            offset = next_offset
-
-        return {
-            "total_points": total_points,
-            "returned_points": len(points),
-            "points": points,
-        }
 
     def get_metadata_options(
         self,
@@ -195,81 +116,15 @@ class CellVectorIndex:
         max_values_per_field: int = 200,
         scan_limit: int = 300000,
     ) -> dict:
-        if max_values_per_field < 1:
-            raise ValueError("max_values_per_field must be greater than 0")
-        if scan_limit < 1:
-            raise ValueError("scan_limit must be greater than 0")
-
-        target_fields = [field for field in (fields or []) if field]
-        if not target_fields:
-            return {
-                "available_fields": [],
-                "options": {},
-                "unique_counts": {},
-                "truncated_fields": [],
-                "scanned_points": 0,
-            }
-
-        value_sets: dict[str, set[str]] = {field: set() for field in target_fields}
-        offset = None
-        scanned_points = 0
-        has_more = True
-
-        while has_more and scanned_points < scan_limit:
-            records, next_offset = self.client.scroll(
-                collection_name=collection_name,
-                limit=1000,
-                offset=offset,
-                with_payload=True,
-                with_vectors=False,
-            )
-            if not records:
-                break
-
-            for record in records:
-                payload = record.payload or {}
-                metadata = payload.get("metadata") or {}
-                for field in target_fields:
-                    current_values = value_sets[field]
-                    if len(current_values) >= max_values_per_field:
-                        continue
-                    value = metadata.get(field)
-                    if value is None:
-                        continue
-                    value_text = str(value).strip()
-                    if not value_text or value_text.lower() in {"nan", "none", "null"}:
-                        continue
-                    current_values.add(value_text)
-
-            scanned_points += len(records)
-            if next_offset is None:
-                has_more = False
-            else:
-                offset = next_offset
-
-            if all(len(value_sets[field]) >= max_values_per_field for field in target_fields):
-                break
-
-        options: dict[str, list[str]] = {}
-        unique_counts: dict[str, int] = {}
-        truncated_fields: list[str] = []
-
-        scan_truncated = has_more or scanned_points >= scan_limit
-        for field in target_fields:
-            values = sorted(value_sets[field])
-            options[field] = values[:max_values_per_field]
-            unique_counts[field] = len(values)
-            if scan_truncated and len(values) >= max_values_per_field:
-                truncated_fields.append(field)
-
-        available_fields = [field for field in target_fields if options.get(field)]
-        return {
-            "available_fields": available_fields,
-            "options": options,
-            "unique_counts": unique_counts,
-            "truncated_fields": truncated_fields,
-            "scanned_points": scanned_points,
-        }
+        return self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/metadata-options",
+            payload={
+                "fields": fields,
+                "max_values_per_field": max_values_per_field,
+                "scan_limit": scan_limit,
+            },
+        )
 
     def search_by_cell_id(
         self,
@@ -279,20 +134,23 @@ class CellVectorIndex:
         top_k: int = 5,
         filters: dict[str, str] | None = None,
         search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
         exact: bool | None = None,
     ) -> list[dict]:
-        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
-        if not vector:
-            raise ValueError(f"unknown cell_id: {cell_id}")
-        return self.search_by_vector(
-            collection_name=collection_name,
-            vector_dim=vector_dim,
-            vector=vector,
-            top_k=top_k,
-            filters=filters,
-            search_params=search_params,
-            exact=exact,
+        response = self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/search/by-id",
+            payload={
+                "vector_dim": vector_dim,
+                "cell_id": cell_id,
+                "top_k": top_k,
+                "filters": filters or {},
+                "search_params": search_params or {},
+                "distance_metric": distance_metric,
+                "exact": exact,
+            },
         )
+        return response["results"]
 
     def search_by_vector(
         self,
@@ -302,18 +160,21 @@ class CellVectorIndex:
         top_k: int = 5,
         filters: dict[str, str] | None = None,
         search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+        vector_is_prepared: bool = False,
         exact: bool | None = None,
     ) -> list[dict]:
-        result = self.search_by_vector_with_timing(
+        return self.search_by_vector_with_timing(
             collection_name=collection_name,
             vector_dim=vector_dim,
             vector=vector,
             top_k=top_k,
             filters=filters,
             search_params=search_params,
+            distance_metric=distance_metric,
+            vector_is_prepared=vector_is_prepared,
             exact=exact,
-        )
-        return result.results
+        ).results
 
     def search_by_vector_with_timing(
         self,
@@ -323,43 +184,27 @@ class CellVectorIndex:
         top_k: int = 5,
         filters: dict[str, str] | None = None,
         search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+        vector_is_prepared: bool = False,
         exact: bool | None = None,
     ) -> SearchResult:
-        if top_k < 1 or top_k > 100:
-            raise ValueError("top_k must be between 1 and 100")
-
-        query_vector = np.asarray(list(vector), dtype=np.float32)
-        if query_vector.ndim != 1:
-            raise ValueError("query vector must be one-dimensional")
-        if len(query_vector) != int(vector_dim):
-            raise ValueError(f"vector dimension must be {vector_dim}")
-
-        resolved_search = _resolve_search_params(search_params, exact=exact)
-        start_time = perf_counter()
-        hits = self.client.search(
-            collection_name=collection_name,
-            query_vector=query_vector.astype(float).tolist(),
-            query_filter=_build_filter(filters),
-            search_params=SearchParams(
-                hnsw_ef=int(resolved_search["hnsw_ef"]),
-                exact=bool(resolved_search["exact"]),
-            ),
-            limit=top_k,
-            with_payload=True,
+        response = self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/search/by-vector",
+            payload={
+                "vector_dim": vector_dim,
+                "vector": list(vector),
+                "top_k": top_k,
+                "filters": filters or {},
+                "search_params": search_params or {},
+                "distance_metric": distance_metric,
+                "vector_is_prepared": vector_is_prepared,
+                "exact": exact,
+            },
         )
-        elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
         return SearchResult(
-            results=[
-                {
-                    "cell_id": hit.payload.get("cell_id"),
-                    "distance": round(1 - float(hit.score), 6),
-                    "score": round(float(hit.score), 6),
-                    "viz": hit.payload.get("viz", {}),
-                    "metadata": hit.payload.get("metadata", {}),
-                }
-                for hit in hits
-            ],
-            query_time_ms=elapsed_ms,
+            results=response["results"],
+            query_time_ms=float(response["query_time_ms"]),
         )
 
     def evaluate_query_by_cell_id(
@@ -370,17 +215,19 @@ class CellVectorIndex:
         top_k: int = 10,
         filters: dict[str, str] | None = None,
         search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
     ) -> dict:
-        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
-        if not vector:
-            raise ValueError(f"unknown cell_id: {cell_id}")
-        return self.evaluate_query_by_vector(
-            collection_name=collection_name,
-            vector_dim=vector_dim,
-            vector=vector,
-            top_k=top_k,
-            filters=filters,
-            search_params=search_params,
+        return self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/evaluate/by-id",
+            payload={
+                "vector_dim": vector_dim,
+                "cell_id": cell_id,
+                "top_k": top_k,
+                "filters": filters or {},
+                "search_params": search_params or {},
+                "distance_metric": distance_metric,
+            },
         )
 
     def evaluate_query_by_vector(
@@ -391,49 +238,29 @@ class CellVectorIndex:
         top_k: int = 10,
         filters: dict[str, str] | None = None,
         search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+        vector_is_prepared: bool = False,
     ) -> dict:
-        ann = self.search_by_vector_with_timing(
-            collection_name=collection_name,
-            vector_dim=vector_dim,
-            vector=vector,
-            top_k=top_k,
-            filters=filters,
-            search_params=search_params,
-            exact=False,
+        return self._request_json(
+            method="POST",
+            path=f"/collections/{quote(collection_name)}/evaluate/by-vector",
+            payload={
+                "vector_dim": vector_dim,
+                "vector": list(vector),
+                "top_k": top_k,
+                "filters": filters or {},
+                "search_params": search_params or {},
+                "distance_metric": distance_metric,
+                "vector_is_prepared": vector_is_prepared,
+            },
         )
-        exact = self.search_by_vector_with_timing(
-            collection_name=collection_name,
-            vector_dim=vector_dim,
-            vector=vector,
-            top_k=top_k,
-            filters=filters,
-            search_params=search_params,
-            exact=True,
-        )
-        ann_ids = [item["cell_id"] for item in ann.results]
-        exact_ids = [item["cell_id"] for item in exact.results]
-        ann_set = set(ann_ids)
-        exact_set = set(exact_ids)
-        overlap_count = len(ann_set & exact_set)
-        precision = overlap_count / len(ann_set) if ann_set else 0.0
-        recall = overlap_count / len(exact_set) if exact_set else 0.0
-
-        return {
-            "top_k": top_k,
-            "ann_query_time_ms": ann.query_time_ms,
-            "exact_query_time_ms": exact.query_time_ms,
-            "precision_at_k": round(precision, 6),
-            "recall_at_k": round(recall, 6),
-            "overlap_count": overlap_count,
-            "ann_results": ann.results,
-            "exact_results": exact.results,
-        }
 
     def collection_exists(self, collection_name: str) -> bool:
-        collection_names = {
-            collection.name for collection in self.client.get_collections().collections
-        }
-        return collection_name in collection_names
+        response = self._request_json(
+            method="GET",
+            path=f"/collections/{quote(collection_name)}/exists",
+        )
+        return bool(response.get("exists"))
 
     def set_active_collection(
         self,
@@ -447,123 +274,63 @@ class CellVectorIndex:
         if dataset_summary is not None:
             self.dataset_summary = dataset_summary
 
-    def _fetch_vector_by_cell_id(self, collection_name: str, cell_id: str) -> list[float] | None:
-        points, _ = self.client.scroll(
-            collection_name=collection_name,
-            scroll_filter=Filter(
-                must=[
-                    FieldCondition(key="cell_id", match=MatchValue(value=cell_id)),
-                ]
-            ),
-            limit=1,
-            with_payload=False,
-            with_vectors=True,
+    def _request_json(
+        self,
+        *,
+        method: str,
+        path: str,
+        payload: dict | None = None,
+        timeout: int = DEFAULT_HTTP_TIMEOUT_SECONDS,
+    ) -> dict:
+        if not self.base_url:
+            raise RuntimeError("FAISS_SERVICE_URL is not configured")
+
+        body = None
+        headers = {"Accept": "application/json"}
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        request = Request(
+            url=urljoin(f"{self.base_url}/", path.lstrip("/")),
+            data=body,
+            headers=headers,
+            method=method.upper(),
         )
-        if not points:
-            return None
-        vector = points[0].vector
-        if isinstance(vector, dict):
-            vector = next(iter(vector.values()), None)
-        if vector is None:
-            return None
-        return list(vector)
-
-    def _reset_collection(self, collection_name: str, vector_dim: int, hnsw_params: dict) -> None:
-        collections = self.client.get_collections().collections
-        collection_names = {collection.name for collection in collections}
-        if collection_name in collection_names:
-            self.client.delete_collection(collection_name=collection_name)
-
-        self.client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE),
-            hnsw_config=HnswConfigDiff(
-                m=int(hnsw_params["m"]),
-                ef_construct=int(hnsw_params["ef_construct"]),
-            ),
-        )
-
-    def _create_payload_indexes(self, collection_name: str, metadata_fields: list[str]) -> None:
-        # Best-effort optimization for metadata filtering; skip failures silently.
-        fields = ["cell_id"] + [f"metadata.{field}" for field in metadata_fields]
-        for field in fields:
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                content = response.read().decode("utf-8")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore")
             try:
-                self.client.create_payload_index(
-                    collection_name=collection_name,
-                    field_name=field,
-                    field_schema=PayloadSchemaType.KEYWORD,
-                )
+                payload = json.loads(detail) if detail else {}
             except Exception:
-                pass
+                payload = {}
+            message = payload.get("error") or detail or f"FAISS service request failed with {exc.code}"
+            raise RuntimeError(message) from exc
+        except URLError as exc:
+            raise RuntimeError(
+                f"Cannot reach FAISS service at {self.base_url}. "
+                "Start it with `docker compose up -d faiss`."
+            ) from exc
+
+        if not content:
+            return {}
+        try:
+            return json.loads(content)
+        except Exception as exc:
+            raise RuntimeError("FAISS service returned invalid JSON") from exc
 
 
-def _create_client() -> QdrantClient:
-    if QDRANT_URL:
-        return QdrantClient(url=QDRANT_URL)
-    storage_path = Path(QDRANT_PATH)
-    storage_path.mkdir(parents=True, exist_ok=True)
+def _resolve_service_data_path(source_path: str) -> str:
+    candidate = Path(source_path)
+    if not candidate.is_absolute():
+        return str(candidate).replace("\\", "/")
     try:
-        return QdrantClient(path=str(storage_path))
-    except TypeError:
-        return QdrantClient(location=str(storage_path))
-
-
-def _normalize_collection_name(raw_name: str) -> str:
-    normalized = re.sub(r"[^a-zA-Z0-9_]+", "_", (raw_name or "").strip())
-    normalized = normalized.strip("_").lower()
-    if len(normalized) < 3 or len(normalized) > 64:
-        raise ValueError("collection name length must be between 3 and 64 after normalization")
-    return normalized
-
-
-def _resolve_hnsw_params(hnsw_params: dict | None) -> dict:
-    resolved = dict(DEFAULT_HNSW_PARAMS)
-    if hnsw_params:
-        for key in ("m", "ef_construct"):
-            if key in hnsw_params and hnsw_params[key] is not None:
-                resolved[key] = int(hnsw_params[key])
-    if resolved["m"] < 4 or resolved["m"] > 128:
-        raise ValueError("hnsw_params.m must be between 4 and 128")
-    if resolved["ef_construct"] < 16 or resolved["ef_construct"] > 4096:
-        raise ValueError("hnsw_params.ef_construct must be between 16 and 4096")
-    return resolved
-
-
-def _resolve_search_params(search_params: dict | None, exact: bool | None = None) -> dict:
-    resolved = dict(DEFAULT_SEARCH_PARAMS)
-    if search_params:
-        if search_params.get("hnsw_ef") is not None:
-            resolved["hnsw_ef"] = int(search_params["hnsw_ef"])
-        if search_params.get("exact") is not None:
-            resolved["exact"] = bool(search_params["exact"])
-    if exact is not None:
-        resolved["exact"] = bool(exact)
-    if resolved["hnsw_ef"] < 16 or resolved["hnsw_ef"] > 4096:
-        raise ValueError("search_params.hnsw_ef must be between 16 and 4096")
-    return resolved
-
-
-def _build_filter(filters: dict[str, str] | None) -> Filter | None:
-    if not filters:
-        return None
-
-    conditions = [
-        FieldCondition(key=f"metadata.{key}", match=MatchValue(value=value))
-        for key, value in filters.items()
-        if value
-    ]
-    if not conditions:
-        return None
-    return Filter(must=conditions)
-
-
-def build_collection_name(user_id: int, index_name: str) -> str:
-    normalized_name = _normalize_collection_name(index_name)
-    prefix = f"user_{user_id}_"
-    max_len = 64
-    available = max_len - len(prefix)
-    if available < 3:
-        raise ValueError("user-specific collection prefix is too long")
-    if len(normalized_name) > available:
-        normalized_name = normalized_name[:available]
-    return f"{prefix}{normalized_name}"
+        relative = candidate.resolve().relative_to(BASE_DIR.resolve())
+    except Exception as exc:
+        raise ValueError(
+            "Dockerized FAISS service can only access datasets under the project workspace. "
+            "Use a path inside this repo or add an explicit bind mount for that dataset."
+        ) from exc
+    return str(relative).replace("\\", "/")
