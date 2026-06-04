@@ -17,7 +17,11 @@ from config import (
     DEFAULT_SAMPLE_DATA,
     MAX_INDEX_BUILD_JOBS,
     SECRET_KEY,
+    ZHIPU_API_KEY,
+    ZHIPU_API_URL,
+    ZHIPU_MODEL,
 )
+from services.ai_advisor import AIAdvisorError, DEFAULT_SUGGESTED_QUESTION, build_dataset_context, request_ai_chat
 from services.auth_service import AuthError, UserStore
 from services.data_loader import (
     DEFAULT_METADATA_FILTER_FIELDS,
@@ -186,6 +190,17 @@ def _resolve_target_index(payload=None, required=True):
         dataset_summary=_index_summary_from_record(index_record),
     )
     return index_record
+
+
+def _remove_cached_index_build_jobs(user_id: int, index_name: str) -> None:
+    with INDEX_BUILD_JOBS_LOCK:
+        stale_job_ids = [
+            job_id
+            for job_id, job in INDEX_BUILD_JOBS.items()
+            if job.get("user_id") == user_id and job.get("index_name") == index_name
+        ]
+        for job_id in stale_job_ids:
+            INDEX_BUILD_JOBS.pop(job_id, None)
 
 
 def _default_index_name(data_path: str):
@@ -1117,6 +1132,59 @@ def dataset_metadata_options():
         return jsonify({"error": str(exc)}), 400
 
 
+@app.post("/api/ai/chat")
+@app.post("/api/ai/index-advice")
+@require_auth
+def ai_chat():
+    payload = request.get_json(silent=True) or {}
+    data_path = str(payload.get("data_path") or "").strip()
+    if not data_path:
+        return jsonify({"error": "data_path is required"}), 400
+
+    raw_dataset_info = payload.get("dataset_info")
+    dataset_info = raw_dataset_info if isinstance(raw_dataset_info, dict) else None
+
+    raw_build_options = payload.get("current_build_options")
+    current_build_options = raw_build_options if isinstance(raw_build_options, dict) else None
+
+    user_question = str(payload.get("user_question") or "").strip()[:2000]
+    raw_conversation_history = payload.get("conversation_history")
+    conversation_history = raw_conversation_history if isinstance(raw_conversation_history, list) else []
+
+    try:
+        if not dataset_info:
+            dataset_info = inspect_cell_dataset(data_path)
+        dataset_context = build_dataset_context(
+            data_path=data_path,
+            dataset_info=dataset_info,
+            current_build_options=current_build_options,
+        )
+        ai_result = request_ai_chat(
+            api_key=ZHIPU_API_KEY,
+            model=ZHIPU_MODEL,
+            api_url=ZHIPU_API_URL,
+            dataset_context=dataset_context,
+            user_question=user_question,
+            conversation_history=conversation_history,
+        )
+    except AIAdvisorError as exc:
+        error_text = str(exc)
+        status_code = 503 if "not configured" in error_text or "connection failed" in error_text else 400
+        return jsonify({"error": error_text}), status_code
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return _api_ok(
+        {
+            "message": "AI chat response ready",
+            "model": ai_result["model"],
+            "dataset_summary": dataset_context,
+            "answer": ai_result["answer"],
+            "suggested_question": ai_result.get("suggested_question") or DEFAULT_SUGGESTED_QUESTION,
+        }
+    )
+
+
 @app.get("/api/indexes")
 @require_auth
 def list_indexes():
@@ -1158,6 +1226,46 @@ def activate_index(index_id):
         return jsonify({"error": str(exc)}), 400
 
     return jsonify({"message": "index activated", "index": index_record})
+
+
+@app.delete("/api/indexes/<int:index_id>")
+@require_auth
+def delete_index(index_id):
+    user_id = request.current_user["id"]
+
+    try:
+        index_record = user_store.get_user_index(user_id, index_id)
+        if not index_record:
+            raise AuthError("index not found")
+
+        collection_name = index_record["collection_name"]
+        index.delete_collection(collection_name)
+        deleted_index = user_store.delete_user_index(user_id, index_id)
+        _remove_cached_index_build_jobs(user_id, deleted_index["index_name"])
+
+        next_active_index = user_store.get_active_user_index(user_id)
+        if deleted_index.get("is_active") or index.collection_name == collection_name:
+            try:
+                if next_active_index and index.collection_exists(next_active_index["collection_name"]):
+                    index.set_active_collection(
+                        collection_name=next_active_index["collection_name"],
+                        vector_dim=next_active_index["vector_dim"],
+                        dataset_summary=_index_summary_from_record(next_active_index),
+                    )
+                else:
+                    index.clear_active_collection()
+            except RuntimeError:
+                index.clear_active_collection()
+    except (AuthError, ValueError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "message": "index deleted",
+            "index": deleted_index,
+            "next_active_index": next_active_index,
+        }
+    )
 
 
 @app.post("/api/index/import")

@@ -35,6 +35,12 @@ const currentDatasetLabel = document.querySelector("#currentDatasetLabel");
 const dataPathInput = document.querySelector("#dataPath");
 const indexTypeInput = document.querySelector("#indexType");
 const distanceMetricInput = document.querySelector("#distanceMetric");
+const hnswMField = document.querySelector("#hnswMField");
+const hnswMInput = document.querySelector("#hnswM");
+const hnswEfConstructField = document.querySelector("#hnswEfConstructField");
+const hnswEfConstructInput = document.querySelector("#hnswEfConstruct");
+const hnswEfSearchField = document.querySelector("#hnswEfSearchField");
+const hnswEfSearchInput = document.querySelector("#hnswEfSearch");
 const ivfNlistField = document.querySelector("#ivfNlistField");
 const ivfNlistInput = document.querySelector("#ivfNlist");
 const ivfNprobeField = document.querySelector("#ivfNprobeField");
@@ -56,6 +62,21 @@ const indexBuildProcessed = document.querySelector("#indexBuildProcessed");
 const indexBuildRate = document.querySelector("#indexBuildRate");
 const indexBuildEta = document.querySelector("#indexBuildEta");
 const indexBuildTimeline = document.querySelector("#indexBuildTimeline");
+const contextHelpTrigger = document.querySelector("#contextHelpTrigger");
+const contextHelpTemplate = document.querySelector("#contextHelpTemplate");
+const contextHelpOverlay = document.querySelector("#contextHelpOverlay");
+const contextHelpOverlayCard = document.querySelector("#contextHelpOverlayCard");
+const contextHelpOverlayBody = document.querySelector("#contextHelpOverlayBody");
+const contextHelpOverlayClose = document.querySelector("#contextHelpOverlayClose");
+const aiAssistantDock = document.querySelector("#aiAssistantDock");
+const aiAssistantLauncher = document.querySelector("#aiAssistantLauncher");
+const aiAssistantPanel = document.querySelector("#aiAssistantPanel");
+const aiAssistantClose = document.querySelector("#aiAssistantClose");
+const aiAssistantSuggestedQuestionBtn = document.querySelector("#aiAssistantSuggestedQuestionBtn");
+const aiAssistantInput = document.querySelector("#aiAssistantInput");
+const aiAssistantSendBtn = document.querySelector("#aiAssistantSendBtn");
+const aiAssistantStatus = document.querySelector("#aiAssistantStatus");
+const aiAssistantMessages = document.querySelector("#aiAssistantMessages");
 
 const filterCellType = document.querySelector("#filterCellType");
 const filterDisease = document.querySelector("#filterDisease");
@@ -118,6 +139,8 @@ const HIGHLIGHT_LIMIT = 100;
 const BUILD_JOB_POLL_MS = 1200;
 const BUILD_JOB_STORAGE_KEY = "sework.activeBuildJob";
 const DEFAULT_UMAP_LEVEL = "preview";
+const AI_ASSISTANT_SUGGESTED_QUESTION =
+  "请结合当前数据集，分别说明 HNSW、IVF、PQ 的优势、劣势、适用场景，并给出各自推荐的参数设置。";
 
 const QUALITY_METRICS = {
   gene: { label: "基因数", histogramKey: "gene_count_histogram", pointField: "gene_count" },
@@ -163,6 +186,10 @@ const state = {
   buildJobId: null,
   buildPollTimer: null,
   buildJobContextPath: "",
+  aiAssistantOpen: false,
+  aiAssistantBusy: false,
+  aiAssistantMessages: [],
+  contextHelpOpen: false,
   adminUsers: [],
 };
 
@@ -248,6 +275,34 @@ function formatTime(value) {
   return Number.isFinite(num) ? `${num.toFixed(2)} ms` : String(value);
 }
 
+function humanizeIndexType(value) {
+  const normalized = trimText(value).toLowerCase();
+  if (normalized === "hnsw") return "FAISS HNSW";
+  if (normalized === "ivf") return "FAISS IVF";
+  if (normalized === "pq") return "FAISS PQ";
+  return normalized ? normalized.toUpperCase() : "--";
+}
+
+function humanizeDistanceMetric(value, effectiveMetric = "") {
+  const normalized = trimText(value).toLowerCase();
+  const normalizedEffective = trimText(effectiveMetric).toLowerCase();
+  const metricLabels = {
+    cosine: "Cosine",
+    ip: "Dot (IP)",
+    l2: "Euclid (L2)",
+    pearson: "Pearson",
+  };
+  const effectiveLabels = {
+    inner_product: "inner product",
+    l2: "L2",
+  };
+  const label = metricLabels[normalized] || (normalized ? normalized.toUpperCase() : "--");
+  if (normalized === "pearson" && normalizedEffective && normalizedEffective !== normalized) {
+    return `${label} (${effectiveLabels[normalizedEffective] || normalizedEffective})`;
+  }
+  return label;
+}
+
 function formatRate(value) {
   if (value === null || value === undefined || value === "") return "--";
   const num = Number(value);
@@ -283,6 +338,9 @@ function positiveIntegerOrNull(value) {
 
 function updateIndexConfigVisibility() {
   const indexType = trimText(indexTypeInput?.value || "hnsw").toLowerCase();
+  if (hnswMField) hnswMField.classList.toggle("d-none", indexType !== "hnsw");
+  if (hnswEfConstructField) hnswEfConstructField.classList.toggle("d-none", indexType !== "hnsw");
+  if (hnswEfSearchField) hnswEfSearchField.classList.toggle("d-none", indexType !== "hnsw");
   if (ivfNlistField) ivfNlistField.classList.toggle("d-none", indexType !== "ivf");
   if (ivfNprobeField) ivfNprobeField.classList.toggle("d-none", indexType !== "ivf");
   if (pqCompressionField) pqCompressionField.classList.toggle("d-none", indexType !== "pq");
@@ -292,7 +350,17 @@ function currentIndexBuildOptions() {
   const indexType = trimText(indexTypeInput?.value || "hnsw").toLowerCase() || "hnsw";
   const distanceMetric = trimText(distanceMetricInput?.value || "cosine").toLowerCase() || "cosine";
   const quantizationConfig = {};
+  const hnswParams = {};
   const searchParams = {};
+
+  if (indexType === "hnsw") {
+    const hnswM = positiveIntegerOrNull(hnswMInput?.value);
+    const hnswEfConstruct = positiveIntegerOrNull(hnswEfConstructInput?.value);
+    const hnswEfSearch = positiveIntegerOrNull(hnswEfSearchInput?.value);
+    if (hnswM) hnswParams.m = hnswM;
+    if (hnswEfConstruct) hnswParams.ef_construct = hnswEfConstruct;
+    if (hnswEfSearch) searchParams.hnsw_ef = hnswEfSearch;
+  }
 
   if (indexType === "ivf") {
     const nlist = positiveIntegerOrNull(ivfNlistInput?.value);
@@ -309,6 +377,7 @@ function currentIndexBuildOptions() {
     index_type: indexType,
     distance_metric: distanceMetric,
     quantization_config: quantizationConfig,
+    hnsw_params: hnswParams,
     search_params: searchParams,
   };
 }
@@ -385,6 +454,270 @@ function setMessage(element, message, tone = "neutral", classSuffix = "") {
         : "status-message neutral-message";
   element.className = `${className}${classSuffix ? ` ${classSuffix}` : ""}`;
   element.textContent = message;
+}
+
+function setAiAssistantDockVisible(visible) {
+  if (!aiAssistantDock) return;
+  aiAssistantDock.classList.toggle("d-none", !visible);
+  aiAssistantDock.hidden = !visible;
+  if (!visible) {
+    state.aiAssistantOpen = false;
+    if (aiAssistantPanel) {
+      aiAssistantPanel.classList.add("d-none");
+      aiAssistantPanel.hidden = true;
+    }
+  }
+}
+
+function setContextHelpOpen(open) {
+  if (!contextHelpOverlay || !contextHelpOverlayCard || !contextHelpOverlayBody || !contextHelpTemplate) return;
+  state.contextHelpOpen = Boolean(open);
+  contextHelpOverlay.classList.toggle("d-none", !state.contextHelpOpen);
+  contextHelpOverlay.hidden = !state.contextHelpOpen;
+  if (!state.contextHelpOpen) return;
+
+  contextHelpOverlayBody.innerHTML = contextHelpTemplate.innerHTML;
+  const triggerRect = contextHelpTrigger?.getBoundingClientRect();
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const cardWidth = Math.min(460, Math.max(280, viewportWidth - 24));
+  const cardHeight = Math.min(560, Math.max(260, Math.floor(viewportHeight * 0.62)));
+  let left = (triggerRect?.right || 24) + 12;
+  let top = triggerRect?.top || 24;
+
+  if (left + cardWidth > viewportWidth - 12) {
+    left = Math.max(12, (triggerRect?.left || 12) - cardWidth - 12);
+  }
+  if (left < 12) {
+    left = 12;
+  }
+  if (top + cardHeight > viewportHeight - 12) {
+    top = Math.max(12, viewportHeight - cardHeight - 12);
+  }
+  if (top < 12) {
+    top = 12;
+  }
+
+  contextHelpOverlayCard.style.left = `${Math.round(left)}px`;
+  contextHelpOverlayCard.style.top = `${Math.round(top)}px`;
+}
+
+function setAiAssistantPanelOpen(open) {
+  if (!aiAssistantPanel) return;
+  state.aiAssistantOpen = Boolean(open);
+  aiAssistantPanel.classList.toggle("d-none", !state.aiAssistantOpen);
+  aiAssistantPanel.hidden = !state.aiAssistantOpen;
+}
+
+function aiAssistantDatasetSummaryLine(datasetSummary = null) {
+  if (!datasetSummary) return "";
+  return [
+    datasetSummary.format || "-",
+    datasetSummary.cell_count ? `${formatNumber(datasetSummary.cell_count)} cells` : null,
+    datasetSummary.vector_dim ? `dim ${formatNumber(datasetSummary.vector_dim)}` : null,
+    datasetSummary.embedding_key ? `embedding ${datasetSummary.embedding_key}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function scrollAiAssistantMessagesToBottom() {
+  if (!aiAssistantMessages) return;
+  aiAssistantMessages.scrollTop = aiAssistantMessages.scrollHeight;
+}
+
+function renderAiAssistantInline(text = "") {
+  return escapeHtml(String(text || ""))
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+}
+
+function renderAiAssistantMarkdown(text = "") {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const html = [];
+  let listMode = "";
+
+  const closeList = () => {
+    if (listMode) {
+      html.push(listMode === "ul" ? "</ul>" : "</ol>");
+      listMode = "";
+    }
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      closeList();
+      continue;
+    }
+
+    const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+    if (bulletMatch) {
+      if (listMode !== "ul") {
+        closeList();
+        html.push("<ul>");
+        listMode = "ul";
+      }
+      html.push(`<li>${renderAiAssistantInline(bulletMatch[1])}</li>`);
+      continue;
+    }
+
+    const numberMatch = line.match(/^\d+\.\s+(.+)$/);
+    if (numberMatch) {
+      if (listMode !== "ol") {
+        closeList();
+        html.push("<ol>");
+        listMode = "ol";
+      }
+      html.push(`<li>${renderAiAssistantInline(numberMatch[1])}</li>`);
+      continue;
+    }
+
+    closeList();
+
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1].length + 1, 6);
+      html.push(`<h${level}>${renderAiAssistantInline(headingMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    html.push(`<p>${renderAiAssistantInline(line)}</p>`);
+  }
+
+  closeList();
+  return html.join("");
+}
+
+function renderAiAssistantMessages() {
+  if (!aiAssistantMessages) return;
+  if (!state.aiAssistantMessages.length) {
+    aiAssistantMessages.innerHTML = `
+      <div class="ai-assistant-placeholder">
+        这里会显示你和 AI 的对话内容。默认推荐问题会围绕 HNSW / IVF / PQ 的优劣和参数建议展开。
+      </div>
+    `;
+    return;
+  }
+
+  aiAssistantMessages.innerHTML = state.aiAssistantMessages
+    .map((message) => {
+      const roleClass = message.role === "user" ? "is-user" : "is-assistant";
+      const roleLabel = message.role === "user" ? "你" : "AI";
+      const meta = trimText(message.meta || "");
+      return `
+        <article class="ai-assistant-message ${roleClass}">
+          <div class="ai-assistant-message-role">${escapeHtml(roleLabel)}</div>
+          <div class="ai-assistant-message-bubble">
+            ${meta ? `<div class="ai-assistant-message-meta">${escapeHtml(meta)}</div>` : ""}
+            <div class="ai-assistant-message-content">${
+              message.role === "assistant"
+                ? renderAiAssistantMarkdown(message.content || "")
+                : escapeHtml(message.content || "").replace(/\n/g, "<br>")
+            }</div>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+  scrollAiAssistantMessagesToBottom();
+}
+
+function resetAiAssistantConversation() {
+  state.aiAssistantMessages = [
+    {
+      role: "assistant",
+      content:
+        "你好，我可以结合当前数据集回答索引类型、距离度量、参数设置和构建策略相关问题。你可以先点上方推荐问题，也可以直接在底部输入任意问题。",
+      meta: "",
+      skipHistory: true,
+    },
+  ];
+  renderAiAssistantMessages();
+}
+
+function appendAiAssistantMessage(role, content, { meta = "", skipHistory = false } = {}) {
+  state.aiAssistantMessages.push({
+    role,
+    content: String(content || ""),
+    meta: String(meta || ""),
+    skipHistory: Boolean(skipHistory),
+  });
+  renderAiAssistantMessages();
+}
+
+function serializeAiAssistantConversationHistory() {
+  return state.aiAssistantMessages
+    .filter((item) => !item.skipHistory && ["user", "assistant"].includes(item.role) && trimText(item.content))
+    .slice(-8)
+    .map((item) => ({
+      role: item.role,
+      content: item.content,
+    }));
+}
+
+function compactDatasetInfoForAi() {
+  const info = normalizeDatasetInfo(state.currentDatasetInfo || {}, state.currentDataPath || trimText(dataPathInput?.value));
+  return {
+    source_path: info.source_path,
+    format: info.format,
+    cell_count: info.cell_count,
+    gene_count: info.gene_count,
+    vector_dim: info.vector_dim,
+    embedding_key: info.embedding_key,
+    visualization_source: info.visualization_source,
+    metadata_columns: Array.isArray(info.metadata_columns) ? info.metadata_columns : [],
+  };
+}
+
+async function sendAiAssistantQuestion(questionText = "") {
+  const dataPath = trimText(state.currentDataPath || dataPathInput?.value);
+  if (!dataPath) {
+    throw new Error("请先选择或输入当前数据集路径");
+  }
+  const question = trimText(questionText);
+  if (!question) {
+    throw new Error("请输入问题");
+  }
+  const conversationHistory = serializeAiAssistantConversationHistory();
+
+  setAiAssistantPanelOpen(true);
+  appendAiAssistantMessage("user", question);
+  state.aiAssistantBusy = true;
+  if (aiAssistantSuggestedQuestionBtn) aiAssistantSuggestedQuestionBtn.disabled = true;
+  if (aiAssistantSendBtn) aiAssistantSendBtn.disabled = true;
+  setMessage(aiAssistantStatus, "AI 正在思考并组织回答...", "neutral");
+
+  try {
+    const response = await requestJson("/api/ai/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        data_path: dataPath,
+        dataset_info: compactDatasetInfoForAi(),
+        current_build_options: currentIndexBuildOptions(),
+        user_question: question,
+        conversation_history: conversationHistory,
+      }),
+      timeoutMs: 60000,
+    });
+    appendAiAssistantMessage("assistant", response.answer || "", {
+      meta: aiAssistantDatasetSummaryLine(response.dataset_summary || null),
+    });
+    setMessage(
+      aiAssistantStatus,
+      `AI 已回复（${response.model || "LLM"}）`,
+      "success"
+    );
+    if (aiAssistantInput) aiAssistantInput.value = "";
+    return response;
+  } catch (error) {
+    setMessage(aiAssistantStatus, error.message, "error");
+    throw error;
+  } finally {
+    state.aiAssistantBusy = false;
+    if (aiAssistantSuggestedQuestionBtn) aiAssistantSuggestedQuestionBtn.disabled = false;
+    if (aiAssistantSendBtn) aiAssistantSendBtn.disabled = false;
+  }
 }
 
 function setBadgeState(mode, text, note) {
@@ -530,6 +863,7 @@ function showAuthView() {
   hubView.hidden = true;
   mainView.classList.add("d-none");
   mainView.hidden = true;
+  setAiAssistantDockVisible(false);
 }
 
 function showHubView() {
@@ -544,6 +878,7 @@ function showHubView() {
     : "--";
   hubCurrentUserLabel.textContent = userLabel;
   applyRoleUI();
+  setAiAssistantDockVisible(false);
 }
 
 function resizeAllCharts() {
@@ -558,6 +893,7 @@ function showMainView() {
   hubView.hidden = true;
   mainView.classList.remove("d-none");
   mainView.hidden = false;
+  setAiAssistantDockVisible(true);
   const userLabel = state.currentUser
     ? `${state.currentUser.username} (${state.currentUser.role})`
     : "--";
@@ -2043,12 +2379,23 @@ function renderHistoryCards(indexes) {
       const statusLabel = item.is_active ? "Active" : "History";
       return `
         <article class="history-card">
+          <button
+            class="history-card-delete"
+            type="button"
+            data-delete-index="${item.id}"
+            aria-label="删除索引 ${escapeHtml(item.index_name)}"
+            title="删除索引"
+          >
+            &times;
+          </button>
           <h3 class="history-card-title">${escapeHtml(item.index_name)}</h3>
           <p class="history-card-subtitle">${escapeHtml(statusLabel)} | updated ${escapeHtml(item.updated_at || "-")}</p>
           <dl class="history-card-meta">
             <dt>Data Path</dt><dd>${escapeHtml(item.data_path || "-")}</dd>
             <dt>Collection</dt><dd>${escapeHtml(item.collection_name || "-")}</dd>
             <dt>Format</dt><dd>${escapeHtml(item.source_format || "-")}</dd>
+            <dt>Index Type</dt><dd>${escapeHtml(humanizeIndexType(item.index_type))}</dd>
+            <dt>Metric</dt><dd>${escapeHtml(humanizeDistanceMetric(item.distance_metric, item.effective_metric))}</dd>
             <dt>Cells</dt><dd>${escapeHtml(formatNumber(item.cell_count))}</dd>
             <dt>Vector Dim</dt><dd>${escapeHtml(formatNumber(item.vector_dim))}</dd>
             <dt>Build Time</dt><dd>${escapeHtml(formatTime(item.build_time_ms))}</dd>
@@ -2071,6 +2418,21 @@ function renderHistoryCards(indexes) {
       }
     });
   }
+
+  for (const btn of historyCards.querySelectorAll("[data-delete-index]")) {
+    btn.addEventListener("click", async () => {
+      const indexId = Number(btn.dataset.deleteIndex);
+      if (!Number.isInteger(indexId) || indexId <= 0) return;
+      btn.disabled = true;
+      try {
+        await deleteHistoryIndex(indexId);
+      } catch (error) {
+        setMessage(hubHistoryMessage, error.message, "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 }
 
 async function openHistoryIndex(indexId) {
@@ -2086,6 +2448,32 @@ async function openHistoryIndex(indexId) {
   });
 
   setMessage(hubHistoryMessage, "Index opened", "success");
+}
+
+async function deleteHistoryIndex(indexId) {
+  const indexRecord = state.historyIndexes.find((item) => Number(item.id) === indexId);
+  if (!indexRecord) {
+    throw new Error("未找到目标索引");
+  }
+
+  const confirmed = window.confirm(
+    `确定要删除索引“${indexRecord.index_name}”吗？该操作会同时删除索引记录、构建任务记录以及 FAISS 索引文件，且不可恢复。`
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  setMessage(hubHistoryMessage, `Deleting ${indexRecord.index_name}...`, "neutral");
+  const data = await requestJson(`/api/indexes/${encodeURIComponent(indexId)}`, { method: "DELETE" });
+  const nextActiveIndex = data.next_active_index || null;
+  if (
+    state.activeIndex &&
+    (Number(state.activeIndex.id) === indexId || state.activeIndex.collection_name === indexRecord.collection_name)
+  ) {
+    state.activeIndex = nextActiveIndex;
+  }
+  await loadHistoryIndexes();
+  setMessage(hubHistoryMessage, `索引 ${indexRecord.index_name} 已删除`, "success");
 }
 
 async function loadHubData() {
@@ -2131,6 +2519,10 @@ async function enterCorePage({ dataPath, info, indexRecord }) {
   setCurrentDataset(dataPath);
   state.currentDatasetInfo = normalizeDatasetInfo(info || {}, state.currentDataPath);
   state.activeIndex = indexRecord || null;
+  state.aiAssistantOpen = false;
+  if (aiAssistantInput) aiAssistantInput.value = "";
+  resetAiAssistantConversation();
+  setMessage(aiAssistantStatus, "可点击上方推荐问题，或在底部输入任意问题。", "neutral");
   renderDatasetInfo(state.currentDatasetInfo);
   if (umapPreviewLevel) {
     umapPreviewLevel.value = state.umapPreviewLevel || DEFAULT_UMAP_LEVEL;
@@ -2382,6 +2774,7 @@ async function buildIndexFromMain() {
       index_type: buildOptions.index_type,
       distance_metric: buildOptions.distance_metric,
       quantization_config: buildOptions.quantization_config,
+      hnsw_params: buildOptions.hnsw_params,
       search_params: buildOptions.search_params,
       async: true,
       activate: true,
@@ -2696,6 +3089,67 @@ openNewDatasetBtn.addEventListener("click", () => {
     setMessage(hubNewDatasetMessage, error.message, "error");
   });
 });
+
+if (aiAssistantLauncher) {
+  aiAssistantLauncher.addEventListener("click", () => {
+    setAiAssistantPanelOpen(!state.aiAssistantOpen);
+  });
+}
+
+if (contextHelpTrigger) {
+  contextHelpTrigger.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextHelpOpen(!state.contextHelpOpen);
+  });
+}
+
+if (contextHelpOverlayClose) {
+  contextHelpOverlayClose.addEventListener("click", () => {
+    setContextHelpOpen(false);
+  });
+}
+
+if (contextHelpOverlay) {
+  contextHelpOverlay.addEventListener("click", (event) => {
+    if (event.target === contextHelpOverlay) {
+      setContextHelpOpen(false);
+    }
+  });
+}
+
+window.addEventListener("resize", () => {
+  if (state.contextHelpOpen) {
+    setContextHelpOpen(true);
+  }
+});
+
+if (aiAssistantClose) {
+  aiAssistantClose.addEventListener("click", () => {
+    setAiAssistantPanelOpen(false);
+  });
+}
+
+if (aiAssistantSuggestedQuestionBtn) {
+  aiAssistantSuggestedQuestionBtn.addEventListener("click", () => {
+    sendAiAssistantQuestion(AI_ASSISTANT_SUGGESTED_QUESTION).catch(() => undefined);
+  });
+}
+
+if (aiAssistantSendBtn) {
+  aiAssistantSendBtn.addEventListener("click", () => {
+    sendAiAssistantQuestion(aiAssistantInput?.value || "").catch(() => undefined);
+  });
+}
+
+if (aiAssistantInput) {
+  aiAssistantInput.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      sendAiAssistantQuestion(aiAssistantInput.value || "").catch(() => undefined);
+    }
+  });
+}
 
 backToHubBtn.addEventListener("click", async () => {
   showHubView();

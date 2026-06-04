@@ -585,6 +585,39 @@ class UserStore:
             )
         return self.get_user_index(user_id, index_id)
 
+    def delete_user_index(self, user_id, index_id):
+        index = self.get_user_index(user_id, index_id)
+        if not index:
+            raise AuthError("index not found")
+
+        now = self._now()
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM index_build_jobs WHERE user_id = ? AND index_name = ?",
+                (user_id, index["index_name"]),
+            )
+            conn.execute(
+                "DELETE FROM user_indexes WHERE id = ? AND user_id = ?",
+                (index_id, user_id),
+            )
+            if index["is_active"]:
+                fallback = conn.execute(
+                    """
+                    SELECT id
+                    FROM user_indexes
+                    WHERE user_id = ? AND status = 'ready'
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (user_id,),
+                ).fetchone()
+                if fallback:
+                    conn.execute(
+                        "UPDATE user_indexes SET is_active = 1, updated_at = ? WHERE id = ?",
+                        (now, fallback["id"]),
+                    )
+        return index
+
     def find_reusable_user_index(
         self,
         user_id,

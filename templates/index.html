@@ -202,8 +202,43 @@
         <section class="main-grid">
           <aside class="panel dataset-panel">
             <div class="panel-heading">
-              <h2 class="panel-title">数据集与索引</h2>
-              <p class="panel-description">检查数据可用性、构建 HNSW 索引，并管理当前查询上下文。</p>
+              <div class="panel-title-row">
+                <h2 class="panel-title">数据集与索引</h2>
+                <div class="context-help">
+                  <button type="button" id="contextHelpTrigger" class="context-help-trigger" aria-label="查看索引与参数说明">?</button>
+                  <div id="contextHelpTemplate" class="context-help-card" hidden>
+                    <div class="context-help-section">
+                      <strong>索引类型</strong>
+                      <ul>
+                        <li><b>HNSW</b>：召回高、查询快，适合中小到中大规模数据，内存占用相对更高。</li>
+                        <li><b>IVF</b>：先聚类再检索，适合更大规模数据，速度和召回可通过参数平衡。</li>
+                        <li><b>PQ</b>：压缩最强，适合内存敏感或超大规模数据，但精度可能下降。</li>
+                      </ul>
+                    </div>
+                    <div class="context-help-section">
+                      <strong>距离度量</strong>
+                      <ul>
+                        <li><b>Cosine</b>：最常用，关注方向相似性。</li>
+                        <li><b>Dot(IP)</b>：适合向量模长也有意义的场景。</li>
+                        <li><b>Euclid(L2)</b>：适合绝对距离有意义的场景。</li>
+                        <li><b>Pearson</b>：更关注变化趋势相关性。</li>
+                      </ul>
+                    </div>
+                    <div class="context-help-section">
+                      <strong>关键参数</strong>
+                      <ul>
+                        <li><b>HNSW M</b>：图连接度，越大通常召回更高，但更耗内存。</li>
+                        <li><b>HNSW EF Construct</b>：建图搜索宽度，越大构建更慢但图质量更好。</li>
+                        <li><b>HNSW EF Search</b>：查询搜索宽度，越大召回更高但查询更慢。</li>
+                        <li><b>IVF NList</b>：聚类桶数量，越大分桶更细但训练更重。</li>
+                        <li><b>IVF NProbe</b>：查询扫描桶数，越大召回更高但更慢。</li>
+                        <li><b>PQ Compression</b>：压缩倍率，越大越省内存，但精度可能越低。</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="panel-description">检查数据可用性、构建 FAISS 索引，并管理当前查询上下文。</p>
             </div>
 
             <div class="field-stack">
@@ -211,13 +246,13 @@
                 <label class="form-label" for="dataPath">数据路径</label>
                 <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
               </div>
-              <div class="filter-grid">
+              <div class="filter-grid index-config-grid">
                 <div>
                   <label class="form-label" for="indexType">Index Type</label>
                   <select id="indexType" class="form-select dashboard-input">
-                    <option value="hnsw">FAISS HNSW</option>
-                    <option value="ivf">FAISS IVF</option>
-                    <option value="pq">FAISS PQ</option>
+                    <option value="hnsw">HNSW</option>
+                    <option value="ivf">IVF</option>
+                    <option value="pq">PQ</option>
                   </select>
                 </div>
                 <div>
@@ -228,6 +263,20 @@
                     <option value="l2">L2</option>
                     <option value="pearson">Pearson</option>
                   </select>
+                </div>
+              </div>
+              <div class="filter-grid index-config-grid">
+                <div id="hnswMField">
+                  <label class="form-label" for="hnswM">HNSW M</label>
+                  <input id="hnswM" class="form-control dashboard-input" type="number" min="4" max="128" value="16">
+                </div>
+                <div id="hnswEfConstructField">
+                  <label class="form-label" for="hnswEfConstruct">HNSW EF Construct</label>
+                  <input id="hnswEfConstruct" class="form-control dashboard-input" type="number" min="16" max="4096" value="128">
+                </div>
+                <div id="hnswEfSearchField">
+                  <label class="form-label" for="hnswEfSearch">HNSW EF Search</label>
+                  <input id="hnswEfSearch" class="form-control dashboard-input" type="number" min="16" max="4096" value="128">
                 </div>
                 <div id="ivfNlistField" class="d-none">
                   <label class="form-label" for="ivfNlist">IVF NList</label>
@@ -592,6 +641,56 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="contextHelpOverlay" class="context-help-overlay d-none" hidden>
+      <div id="contextHelpOverlayCard" class="context-help-overlay-card" role="dialog" aria-modal="false" aria-label="索引与参数说明">
+        <button id="contextHelpOverlayClose" type="button" class="context-help-overlay-close" aria-label="关闭说明">×</button>
+        <div id="contextHelpOverlayBody"></div>
+      </div>
+    </div>
+
+    <div id="aiAssistantDock" class="ai-assistant-dock d-none" hidden>
+      <button id="aiAssistantLauncher" type="button" class="ai-assistant-launcher" aria-label="打开 AI 索引助手">
+        <span class="ai-assistant-launcher-badge">AI</span>
+        <span class="ai-assistant-launcher-label">索引助手</span>
+      </button>
+      <section id="aiAssistantPanel" class="ai-assistant-panel d-none" hidden aria-live="polite">
+        <div class="ai-assistant-header">
+          <div>
+            <h3 class="ai-assistant-title">AI 索引助手</h3>
+            <p class="ai-assistant-subtitle">结合当前数据集回答索引结构、参数和构建问题</p>
+          </div>
+          <button id="aiAssistantClose" type="button" class="ai-assistant-close" aria-label="关闭 AI 助手">×</button>
+        </div>
+        <div class="ai-assistant-body">
+          <div class="ai-assistant-suggestions">
+            <div class="ai-assistant-suggestions-title">推荐问题</div>
+            <button
+              id="aiAssistantSuggestedQuestionBtn"
+              type="button"
+              class="ai-assistant-suggestion-btn"
+            >
+              请结合当前数据集，分别说明 HNSW、IVF、PQ 的优势、劣势、适用场景，并给出各自推荐的参数设置。
+            </button>
+          </div>
+          <div id="aiAssistantStatus" class="status-message neutral-message">可点击上方推荐问题，或在底部输入任意问题。</div>
+          <div id="aiAssistantMessages" class="ai-assistant-messages">
+            <div class="ai-assistant-placeholder">
+              这里会显示你和 AI 的对话内容。默认推荐问题会围绕 HNSW / IVF / PQ 的优劣和参数建议展开。
+            </div>
+          </div>
+          <div class="ai-assistant-composer">
+            <textarea
+              id="aiAssistantInput"
+              class="form-control dashboard-input ai-assistant-input"
+              rows="3"
+              placeholder="请输入你的问题，Ctrl + Enter 发送"
+            ></textarea>
+            <button id="aiAssistantSendBtn" type="button" class="btn action-btn primary-btn ai-assistant-send-btn">发送</button>
+          </div>
+        </div>
+      </section>
     </div>
 
     <script>

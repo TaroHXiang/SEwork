@@ -262,6 +262,16 @@ class CellVectorIndex:
         )
         return bool(response.get("exists"))
 
+    def delete_collection(self, collection_name: str) -> bool:
+        response = self._request_json(
+            method="DELETE",
+            path=f"/collections/{quote(collection_name)}",
+        )
+        deleted = bool(response.get("deleted"))
+        if deleted and self.collection_name == collection_name:
+            self.clear_active_collection()
+        return deleted
+
     def set_active_collection(
         self,
         collection_name: str,
@@ -273,6 +283,11 @@ class CellVectorIndex:
             self.vector_dim = int(vector_dim)
         if dataset_summary is not None:
             self.dataset_summary = dataset_summary
+
+    def clear_active_collection(self) -> None:
+        self.collection_name = None
+        self.vector_dim = None
+        self.dataset_summary = None
 
     def _request_json(
         self,

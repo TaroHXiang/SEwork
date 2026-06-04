@@ -60,6 +60,11 @@ def collection_exists(collection_name: str):
     return jsonify({"exists": engine.collection_exists(collection_name)})
 
 
+@app.delete("/collections/<collection_name>")
+def delete_collection(collection_name: str):
+    return jsonify({"deleted": engine.delete_collection(collection_name)})
+
+
 @app.post("/collections/build")
 def build_collection():
     payload = request.get_json(silent=True) or {}
