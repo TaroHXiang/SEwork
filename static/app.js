@@ -33,6 +33,14 @@ const adminUsersBody = document.querySelector("#adminUsersBody");
 const backToHubBtn = document.querySelector("#backToHubBtn");
 const currentDatasetLabel = document.querySelector("#currentDatasetLabel");
 const dataPathInput = document.querySelector("#dataPath");
+const indexTypeInput = document.querySelector("#indexType");
+const distanceMetricInput = document.querySelector("#distanceMetric");
+const ivfNlistField = document.querySelector("#ivfNlistField");
+const ivfNlistInput = document.querySelector("#ivfNlist");
+const ivfNprobeField = document.querySelector("#ivfNprobeField");
+const ivfNprobeInput = document.querySelector("#ivfNprobe");
+const pqCompressionField = document.querySelector("#pqCompressionField");
+const pqCompressionInput = document.querySelector("#pqCompression");
 const inspectDataBtn = document.querySelector("#inspectDataBtn");
 const buildIndexBtn = document.querySelector("#buildIndexBtn");
 const indexStatus = document.querySelector("#indexStatus");
@@ -265,6 +273,44 @@ function numberOrNull(value) {
 
 function trimText(value) {
   return String(value || "").trim();
+}
+
+function positiveIntegerOrNull(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num <= 0) return null;
+  return num;
+}
+
+function updateIndexConfigVisibility() {
+  const indexType = trimText(indexTypeInput?.value || "hnsw").toLowerCase();
+  if (ivfNlistField) ivfNlistField.classList.toggle("d-none", indexType !== "ivf");
+  if (ivfNprobeField) ivfNprobeField.classList.toggle("d-none", indexType !== "ivf");
+  if (pqCompressionField) pqCompressionField.classList.toggle("d-none", indexType !== "pq");
+}
+
+function currentIndexBuildOptions() {
+  const indexType = trimText(indexTypeInput?.value || "hnsw").toLowerCase() || "hnsw";
+  const distanceMetric = trimText(distanceMetricInput?.value || "cosine").toLowerCase() || "cosine";
+  const quantizationConfig = {};
+  const searchParams = {};
+
+  if (indexType === "ivf") {
+    const nlist = positiveIntegerOrNull(ivfNlistInput?.value);
+    const nprobe = positiveIntegerOrNull(ivfNprobeInput?.value);
+    if (nlist) quantizationConfig.nlist = nlist;
+    if (nprobe) searchParams.nprobe = nprobe;
+  }
+
+  if (indexType === "pq" && pqCompressionInput?.value) {
+    quantizationConfig.compression = trimText(pqCompressionInput.value).toLowerCase();
+  }
+
+  return {
+    index_type: indexType,
+    distance_metric: distanceMetric,
+    quantization_config: quantizationConfig,
+    search_params: searchParams,
+  };
 }
 
 function inferFormat(pathValue) {
@@ -2231,7 +2277,7 @@ async function handleBuildJobUpdate(job) {
   if (job.status === "queued" || job.status === "running") {
     if (applyToCurrentView) {
       savePersistedBuildJob({ jobId: job.job_id, dataPath: state.buildJobContextPath || state.currentDataPath });
-      setBadgeState("is-loading", "Building Index", "Writing vectors and creating HNSW");
+      setBadgeState("is-loading", "Building Index", "Writing vectors into FAISS");
       setMessage(indexStatus, job.message || "Build running...", "neutral");
     }
     return;
@@ -2307,6 +2353,8 @@ async function buildIndexFromMain() {
     return;
   }
 
+  const buildOptions = currentIndexBuildOptions();
+
   buildIndexBtn.disabled = true;
   setCurrentDataset(path);
   state.activeIndex = null;
@@ -2331,6 +2379,10 @@ async function buildIndexFromMain() {
   try {
     const response = await postJson("/api/index/build", {
       data_path: path,
+      index_type: buildOptions.index_type,
+      distance_metric: buildOptions.distance_metric,
+      quantization_config: buildOptions.quantization_config,
+      search_params: buildOptions.search_params,
       async: true,
       activate: true,
       reuse_if_available: true,
@@ -2662,6 +2714,12 @@ buildIndexBtn.addEventListener("click", () => {
   });
 });
 
+if (indexTypeInput) {
+  indexTypeInput.addEventListener("change", () => {
+    updateIndexConfigVisibility();
+  });
+}
+
 searchByIdBtn.addEventListener("click", () => {
   searchById().catch((error) => {
     setMessage(queryStatus, error.message, "error");
@@ -2789,5 +2847,6 @@ if (adminUsersBody) {
 
 setQueryMetrics();
 refreshEvaluationUI();
+updateIndexConfigVisibility();
 showTableState("No query results yet. Build/activate an index then query.").catch(() => undefined);
 checkAuthAndInit();

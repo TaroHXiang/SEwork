@@ -27,7 +27,11 @@ from services.data_loader import (
     load_dataset_metadata_options,
     load_dataset_visualization_preview,
 )
-from services.vector_index import CellVectorIndex, build_collection_name
+from services.vector_index import (
+    CellVectorIndex,
+    build_collection_name,
+    normalize_requested_build_options,
+)
 
 
 app = Flask(__name__)
@@ -136,6 +140,10 @@ def _index_summary_from_record(index_record):
         "vector_dim": index_record.get("vector_dim"),
         "embedding_key": index_record.get("embedding_key"),
         "visualization_source": index_record.get("visualization_source"),
+        "index_type": index_record.get("index_type"),
+        "distance_metric": index_record.get("distance_metric"),
+        "effective_metric": index_record.get("effective_metric"),
+        "quantization_config": index_record.get("quantization_config", {}),
         "metadata_fields": index_record.get("metadata_keys", []),
     }
 
@@ -143,8 +151,8 @@ def _index_summary_from_record(index_record):
 def _require_collection_exists(collection_name):
     if not index.collection_exists(collection_name):
         raise RuntimeError(
-            f"collection not found in Qdrant: {collection_name}. "
-            "Please rebuild or import this index."
+            f"collection not found in FAISS service: {collection_name}. "
+            "Please rebuild this index or make sure the FAISS Docker service is running."
         )
 
 
@@ -198,6 +206,10 @@ def _build_index_response(index_record: dict, dataset, elapsed_ms: float) -> dic
         "index_id": index_record["id"],
         "index_name": index_record["index_name"],
         "collection": index_record["collection_name"],
+        "index_type": index_record["index_type"],
+        "distance_metric": index_record["distance_metric"],
+        "effective_metric": index_record["effective_metric"],
+        "quantization_config": index_record["quantization_config"],
         "cell_count": dataset.cell_count,
         "gene_count": dataset.gene_count,
         "vector_dim": dataset.vector_dim,
@@ -216,6 +228,9 @@ def _perform_index_build(
     user_id: int,
     data_path: str,
     index_name: str,
+    index_type: str,
+    distance_metric: str,
+    quantization_config: dict,
     hnsw_params: dict,
     search_params: dict,
     activate: bool,
@@ -240,6 +255,9 @@ def _perform_index_build(
     build_meta = index.build(
         dataset=dataset,
         collection_name=collection_name,
+        index_type=index_type,
+        distance_metric=distance_metric,
+        quantization_config=quantization_config,
         hnsw_params=hnsw_params,
         search_params=search_params,
         progress_callback=progress_callback,
@@ -263,6 +281,10 @@ def _perform_index_build(
         gene_count=dataset.gene_count,
         vector_dim=dataset.vector_dim,
         embedding_key=dataset.embedding_key,
+        index_type=build_meta["index_type"],
+        distance_metric=build_meta["distance_metric"],
+        effective_metric=build_meta["effective_metric"],
+        quantization_config=build_meta["quantization_config"],
         metadata_keys=dataset.metadata_fields,
         hnsw_params=build_meta["hnsw_params"],
         search_params=build_meta["search_params"],
@@ -290,6 +312,10 @@ def _create_index_build_job(
     user_id: int,
     data_path: str,
     index_name: str,
+    index_type: str,
+    distance_metric: str,
+    effective_metric: str,
+    quantization_config: dict,
     hnsw_params: dict,
     search_params: dict,
     activate: bool,
@@ -305,6 +331,10 @@ def _create_index_build_job(
         "user_id": user_id,
         "data_path": data_path,
         "index_name": index_name,
+        "index_type": index_type,
+        "distance_metric": distance_metric,
+        "effective_metric": effective_metric,
+        "quantization_config": quantization_config,
         "hnsw_params": hnsw_params,
         "search_params": search_params,
         "activate": bool(activate),
@@ -385,7 +415,7 @@ def _append_index_build_history(job_id: str, *, stage: str, text: str):
     return _update_index_build_job(job_id, history=history[-12:])
 
 
-def _run_index_build_job(job_id: str):
+def _run_index_build_job_legacy(job_id: str):
     job = _get_index_build_job(job_id)
     if not job:
         return
@@ -393,6 +423,9 @@ def _run_index_build_job(job_id: str):
     user_id = job["user_id"]
     data_path = job["data_path"]
     index_name = job["index_name"]
+    index_type = job["index_type"]
+    distance_metric = job["distance_metric"]
+    quantization_config = job.get("quantization_config") or {}
     hnsw_params = job["hnsw_params"]
     search_params = job["search_params"]
     activate = bool(job["activate"])
@@ -537,6 +570,10 @@ def _public_index_build_job(job: dict) -> dict:
         "job_id": job["job_id"],
         "status": job["status"],
         "stage": job["stage"],
+        "index_type": job.get("index_type"),
+        "distance_metric": job.get("distance_metric"),
+        "effective_metric": job.get("effective_metric"),
+        "quantization_config": job.get("quantization_config") or {},
         "message": job["message"],
         "progress_pct": job["progress_pct"],
         "processed_cells": job["processed_cells"],
@@ -555,10 +592,23 @@ def _public_index_build_job(job: dict) -> dict:
     }
 
 
-def _find_reusable_index_for_request(user_id: int, data_path: str, hnsw_params: dict, search_params: dict):
+def _find_reusable_index_for_request(
+    user_id: int,
+    data_path: str,
+    index_type: str,
+    distance_metric: str,
+    effective_metric: str,
+    quantization_config: dict,
+    hnsw_params: dict,
+    search_params: dict,
+):
     index_record = user_store.find_reusable_user_index(
         user_id,
         data_path=data_path,
+        index_type=index_type,
+        distance_metric=distance_metric,
+        effective_metric=effective_metric,
+        quantization_config=quantization_config,
         hnsw_params=hnsw_params,
         search_params=search_params,
     )
@@ -771,14 +821,39 @@ def build_index():
     user_id = request.current_user["id"]
     data_path = payload.get("data_path") or str(DEFAULT_SAMPLE_DATA)
     index_name = payload.get("index_name") or _default_index_name(data_path)
-    hnsw_params = payload.get("hnsw_params") or {}
-    search_params = payload.get("search_params") or {}
     activate = _to_bool(payload.get("activate"), default=True)
     run_async = _to_bool(payload.get("async"), default=False)
     reuse_if_available = _to_bool(payload.get("reuse_if_available"), default=True)
 
+    try:
+        requested_options = normalize_requested_build_options(
+            index_type=payload.get("index_type"),
+            distance_metric=payload.get("distance_metric"),
+            quantization_config=payload.get("quantization_config"),
+            hnsw_params=payload.get("hnsw_params"),
+            search_params=payload.get("search_params"),
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    index_type = requested_options["index_type"]
+    distance_metric = requested_options["distance_metric"]
+    effective_metric = requested_options["effective_metric"]
+    quantization_config = requested_options["quantization_config"]
+    hnsw_params = requested_options["hnsw_params"]
+    search_params = requested_options["search_params"]
+
     if reuse_if_available:
-        reusable_index = _find_reusable_index_for_request(user_id, data_path, hnsw_params, search_params)
+        reusable_index = _find_reusable_index_for_request(
+            user_id,
+            data_path,
+            index_type,
+            distance_metric,
+            effective_metric,
+            quantization_config,
+            hnsw_params,
+            search_params,
+        )
         if reusable_index:
             if activate and not reusable_index["is_active"]:
                 reusable_index = user_store.set_active_user_index(user_id, reusable_index["id"])
@@ -795,7 +870,14 @@ def build_index():
 
     if run_async:
         existing_job = user_store.get_latest_running_build_job(user_id, data_path=data_path)
-        if existing_job and existing_job.get("hnsw_params") == hnsw_params and existing_job.get("search_params") == search_params:
+        if (
+            existing_job
+            and existing_job.get("index_type") == index_type
+            and existing_job.get("distance_metric") == distance_metric
+            and (existing_job.get("quantization_config") or {}) == quantization_config
+            and existing_job.get("hnsw_params") == hnsw_params
+            and existing_job.get("search_params") == search_params
+        ):
             with INDEX_BUILD_JOBS_LOCK:
                 INDEX_BUILD_JOBS[existing_job["job_id"]] = dict(existing_job)
             return (
@@ -815,6 +897,10 @@ def build_index():
                 user_id=user_id,
                 data_path=data_path,
                 index_name=index_name,
+                index_type=index_type,
+                distance_metric=distance_metric,
+                effective_metric=effective_metric,
+                quantization_config=quantization_config,
                 hnsw_params=hnsw_params,
                 search_params=search_params,
                 activate=activate,
@@ -840,6 +926,9 @@ def build_index():
             user_id=user_id,
             data_path=data_path,
             index_name=index_name,
+            index_type=index_type,
+            distance_metric=distance_metric,
+            quantization_config=quantization_config,
             hnsw_params=hnsw_params,
             search_params=search_params,
             activate=activate,
@@ -1091,6 +1180,13 @@ def import_index():
         vector_dim = int(vector_dim)
         if vector_dim <= 0:
             raise ValueError("vector_dim must be greater than 0")
+        requested_options = normalize_requested_build_options(
+            index_type=payload.get("index_type"),
+            distance_metric=payload.get("distance_metric"),
+            quantization_config=payload.get("quantization_config"),
+            hnsw_params=payload.get("hnsw_params"),
+            search_params=payload.get("search_params"),
+        )
         _require_collection_exists(collection_name)
         index_record = user_store.create_user_index(
             user_id=user_id,
@@ -1102,9 +1198,13 @@ def import_index():
             gene_count=int(payload.get("gene_count") or 0),
             vector_dim=vector_dim,
             embedding_key=payload.get("embedding_key") or "imported",
+            index_type=requested_options["index_type"],
+            distance_metric=requested_options["distance_metric"],
+            effective_metric=requested_options["effective_metric"],
+            quantization_config=requested_options["quantization_config"],
             metadata_keys=payload.get("metadata_fields") or [],
-            hnsw_params=payload.get("hnsw_params") or {},
-            search_params=payload.get("search_params") or {},
+            hnsw_params=requested_options["hnsw_params"],
+            search_params=requested_options["search_params"],
             build_time_ms=float(payload.get("build_time_ms") or 0.0),
             is_active=_to_bool(payload.get("activate"), default=True),
             status="ready",
@@ -1357,9 +1457,11 @@ def upstream_contract():
                 "payload": {
                     "data_path": "data/liver.h5ad",
                     "index_name": "liver_pca_v1",
+                    "index_type": "ivf",
+                    "distance_metric": "cosine",
                     "async": True,
-                    "hnsw_params": {"m": 16, "ef_construct": 128},
-                    "search_params": {"hnsw_ef": 128},
+                    "quantization_config": {"nlist": 128},
+                    "search_params": {"nprobe": 8},
                 },
                 "progress_endpoint": "/api/index/build/jobs/<job_id>",
             },
@@ -1411,6 +1513,157 @@ def downstream_contract():
             ],
         }
     )
+
+
+def _run_index_build_job(job_id: str):
+    job = _get_index_build_job(job_id)
+    if not job:
+        return
+
+    user_id = job["user_id"]
+    data_path = job["data_path"]
+    index_name = job["index_name"]
+    index_type = job["index_type"]
+    distance_metric = job["distance_metric"]
+    quantization_config = job.get("quantization_config") or {}
+    hnsw_params = job["hnsw_params"]
+    search_params = job["search_params"]
+    activate = bool(job["activate"])
+
+    _update_index_build_job(
+        job_id,
+        status="running",
+        stage="loading_dataset",
+        message="loading dataset",
+        started_at=_utc_now_iso(),
+        progress_pct=1.0,
+        elapsed_seconds=0.0,
+    )
+    _append_index_build_history(job_id, stage="loading_dataset", text="loading dataset and extracting vectors")
+
+    progress_start = perf_counter()
+
+    def on_status(stage: str, payload: dict):
+        elapsed_seconds = round(max(perf_counter() - progress_start, 0.0), 1)
+        if stage == "dataset_loaded":
+            cell_count = payload.get("cell_count")
+            gene_count = payload.get("gene_count")
+            vector_dim = payload.get("vector_dim")
+            summary = {
+                "cell_count": cell_count,
+                "gene_count": gene_count,
+                "vector_dim": vector_dim,
+                "embedding_key": payload.get("embedding_key"),
+                "source_path": payload.get("source_path"),
+                "source_format": payload.get("source_format"),
+            }
+            _update_index_build_job(
+                job_id,
+                status="running",
+                stage="dataset_loaded",
+                message=f"dataset loaded, start building FAISS {index_type}",
+                progress_pct=5.0,
+                processed_cells=0,
+                total_cells=cell_count,
+                elapsed_seconds=elapsed_seconds,
+                dataset_summary=summary,
+            )
+            _append_index_build_history(
+                job_id,
+                stage="dataset_loaded",
+                text=(
+                    f"dataset loaded: {cell_count} cells, {gene_count} genes, "
+                    f"dim {vector_dim}, index_type={index_type}"
+                ),
+            )
+        elif stage == "persisting_index":
+            _update_index_build_job(
+                job_id,
+                status="running",
+                stage="persisting_index",
+                message="persisting index metadata",
+                progress_pct=97.0,
+                processed_cells=payload.get("cell_count"),
+                total_cells=payload.get("cell_count"),
+                elapsed_seconds=elapsed_seconds,
+                eta_seconds=1.0,
+            )
+            _append_index_build_history(
+                job_id,
+                stage="persisting_index",
+                text=f"persisting index metadata for {payload.get('collection_name')}",
+            )
+
+    def on_progress(processed_cells: int, total_cells: int):
+        progress_ratio = (processed_cells / total_cells) if total_cells else 0.0
+        progress_pct = round(min(95.0, 5.0 + progress_ratio * 90.0), 2)
+        elapsed_seconds = max(perf_counter() - progress_start, 0.001)
+        eta_seconds = None
+        if processed_cells > 0 and total_cells and processed_cells < total_cells:
+            process_rate = processed_cells / elapsed_seconds
+            remaining = max(total_cells - processed_cells, 0)
+            eta_seconds = round(remaining / process_rate, 1) if process_rate > 0 else None
+
+        _update_index_build_job(
+            job_id,
+            status="running",
+            stage="building_hnsw",
+            message=f"building FAISS {index_type} index ({processed_cells}/{total_cells})",
+            progress_pct=progress_pct,
+            processed_cells=processed_cells,
+            total_cells=total_cells,
+            elapsed_seconds=round(elapsed_seconds, 1),
+            rate_cells_per_second=round(processed_cells / elapsed_seconds, 1) if processed_cells > 0 else None,
+            eta_seconds=eta_seconds,
+        )
+
+    try:
+        result = _perform_index_build(
+            user_id=user_id,
+            data_path=data_path,
+            index_name=index_name,
+            index_type=index_type,
+            distance_metric=distance_metric,
+            quantization_config=quantization_config,
+            hnsw_params=hnsw_params,
+            search_params=search_params,
+            activate=activate,
+            progress_callback=on_progress,
+            status_callback=on_status,
+        )
+    except Exception as exc:
+        _update_index_build_job(
+            job_id,
+            status="failed",
+            stage="failed",
+            message="index build failed",
+            error=str(exc),
+            progress_pct=100.0,
+            finished_at=_utc_now_iso(),
+            elapsed_seconds=round(max(perf_counter() - progress_start, 0.0), 1),
+            eta_seconds=None,
+        )
+        _append_index_build_history(job_id, stage="failed", text=f"build failed: {exc}")
+        return
+
+    _update_index_build_job(
+        job_id,
+        status="completed",
+        stage="completed",
+        message="index build completed",
+        progress_pct=100.0,
+        processed_cells=result["cell_count"],
+        total_cells=result["cell_count"],
+        elapsed_seconds=round(max(perf_counter() - progress_start, 0.0), 1),
+        rate_cells_per_second=round(
+            result["cell_count"] / max(perf_counter() - progress_start, 0.001),
+            1,
+        ),
+        result=result,
+        finished_at=_utc_now_iso(),
+        eta_seconds=0.0,
+    )
+    _append_index_build_history(job_id, stage="completed", text="index build completed")
 
 
 if __name__ == "__main__":

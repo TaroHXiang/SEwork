@@ -211,6 +211,42 @@
                 <label class="form-label" for="dataPath">数据路径</label>
                 <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
               </div>
+              <div class="filter-grid">
+                <div>
+                  <label class="form-label" for="indexType">Index Type</label>
+                  <select id="indexType" class="form-select dashboard-input">
+                    <option value="hnsw">FAISS HNSW</option>
+                    <option value="ivf">FAISS IVF</option>
+                    <option value="pq">FAISS PQ</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="distanceMetric">Distance Metric</label>
+                  <select id="distanceMetric" class="form-select dashboard-input">
+                    <option value="cosine">Cosine</option>
+                    <option value="ip">Inner Product</option>
+                    <option value="l2">L2</option>
+                    <option value="pearson">Pearson</option>
+                  </select>
+                </div>
+                <div id="ivfNlistField" class="d-none">
+                  <label class="form-label" for="ivfNlist">IVF NList</label>
+                  <input id="ivfNlist" class="form-control dashboard-input" type="number" min="1" placeholder="Auto">
+                </div>
+                <div id="ivfNprobeField" class="d-none">
+                  <label class="form-label" for="ivfNprobe">IVF NProbe</label>
+                  <input id="ivfNprobe" class="form-control dashboard-input" type="number" min="1" value="8">
+                </div>
+                <div id="pqCompressionField" class="d-none">
+                  <label class="form-label" for="pqCompression">PQ Compression</label>
+                  <select id="pqCompression" class="form-select dashboard-input">
+                    <option value="x8">x8</option>
+                    <option value="x16" selected>x16</option>
+                    <option value="x32">x32</option>
+                    <option value="x64">x64</option>
+                  </select>
+                </div>
+              </div>
               <div class="action-row">
                 <button id="inspectDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
                 <button id="buildIndexBtn" type="button" class="btn btn-primary action-btn primary-btn">构建索引</button>
