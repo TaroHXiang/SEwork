@@ -21,6 +21,7 @@ from config import (
     ZHIPU_API_URL,
     ZHIPU_MODEL,
 )
+from services.admin_service import AdminStore
 from services.ai_advisor import AIAdvisorError, DEFAULT_SUGGESTED_QUESTION, build_dataset_context, request_ai_chat
 from services.auth_service import AuthError, UserStore
 from services.data_loader import (
@@ -42,10 +43,12 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET_KEY
 index = CellVectorIndex()
 user_store = UserStore(DATABASE_URL, SECRET_KEY)
+admin_store = AdminStore(DATABASE_URL)
 user_store.init_db()
 user_store.mark_unfinished_build_jobs_failed()
 INDEX_BUILD_JOBS: dict[str, dict] = {}
 INDEX_BUILD_JOBS_LOCK = Lock()
+ADMIN_ROLES = {"admin", "super_admin"}
 
 
 @app.before_request
@@ -113,6 +116,24 @@ def _get_bearer_token():
     if auth_header.startswith("Bearer "):
         return auth_header.removeprefix("Bearer ").strip()
     return None
+
+
+def _client_ip():
+    forwarded = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    real_ip = (request.headers.get("X-Real-IP") or "").strip()
+    return forwarded or real_ip or (request.remote_addr or "")
+
+
+def _is_admin_role(role: str | None):
+    return str(role or "").strip().lower() in ADMIN_ROLES
+
+
+def _is_admin_user(user: dict | None):
+    return _is_admin_role((user or {}).get("role"))
+
+
+def _is_super_admin_user(user: dict | None):
+    return str((user or {}).get("role") or "").strip().lower() == "super_admin"
 
 
 def _to_bool(value, default=False):
@@ -211,6 +232,35 @@ def _default_index_name(data_path: str):
     return f"{safe_stem}_{timestamp}"
 
 
+def _seed_dataset_info(data_path: str):
+    data_path = str(data_path or "").strip()
+    return {
+        "source_path": data_path,
+        "dataset_name": Path(data_path).stem or "dataset",
+    }
+
+
+def _ensure_dataset_record(user_id: int, data_path: str, dataset_info: dict | None = None, status: str = "ready"):
+    payload = dict(dataset_info or {})
+    payload.setdefault("source_path", str(data_path or "").strip())
+    payload.setdefault("dataset_name", Path(str(data_path or "").strip()).stem or "dataset")
+    return admin_store.upsert_dataset(user_id, data_path, dataset_info=payload, status=status)
+
+
+def _delete_collection_if_present(collection_name: str):
+    if not collection_name:
+        return False
+    try:
+        if not index.collection_exists(collection_name):
+            return False
+        return index.delete_collection(collection_name)
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        if "collection not found" in message:
+            return False
+        raise
+
+
 def _utc_now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -243,12 +293,14 @@ def _perform_index_build(
     user_id: int,
     data_path: str,
     index_name: str,
+    dataset_id: int | None,
     index_type: str,
     distance_metric: str,
     quantization_config: dict,
     hnsw_params: dict,
     search_params: dict,
     activate: bool,
+    created_by: int | None = None,
     progress_callback=None,
     status_callback=None,
 ):
@@ -277,6 +329,22 @@ def _perform_index_build(
         search_params=search_params,
         progress_callback=progress_callback,
     )
+    dataset_record = _ensure_dataset_record(
+        user_id,
+        dataset.source_path,
+        dataset_info={
+            "source_path": dataset.source_path,
+            "format": dataset.source_format,
+            "cell_count": dataset.cell_count,
+            "gene_count": dataset.gene_count,
+            "vector_dim": dataset.vector_dim,
+            "embedding_key": dataset.embedding_key,
+            "visualization_source": dataset.visualization_source,
+            "metadata_fields": dataset.metadata_fields,
+            "dataset_name": Path(dataset.source_path).stem or "dataset",
+        },
+        status="ready",
+    )
     if status_callback is not None:
         status_callback(
             "persisting_index",
@@ -296,6 +364,7 @@ def _perform_index_build(
         gene_count=dataset.gene_count,
         vector_dim=dataset.vector_dim,
         embedding_key=dataset.embedding_key,
+        visualization_source=dataset.visualization_source,
         index_type=build_meta["index_type"],
         distance_metric=build_meta["distance_metric"],
         effective_metric=build_meta["effective_metric"],
@@ -303,6 +372,8 @@ def _perform_index_build(
         metadata_keys=dataset.metadata_fields,
         hnsw_params=build_meta["hnsw_params"],
         search_params=build_meta["search_params"],
+        dataset_id=dataset_record["id"] if dataset_record else dataset_id,
+        created_by=created_by,
         build_time_ms=elapsed_ms,
         is_active=activate,
         status="ready",
@@ -325,6 +396,7 @@ def _trim_index_build_jobs_locked():
 def _create_index_build_job(
     *,
     user_id: int,
+    dataset_id: int | None,
     data_path: str,
     index_name: str,
     index_type: str,
@@ -344,6 +416,8 @@ def _create_index_build_job(
     job = {
         "job_id": job_id,
         "user_id": user_id,
+        "dataset_id": dataset_id,
+        "requested_by": user_id,
         "data_path": data_path,
         "index_name": index_name,
         "index_type": index_type,
@@ -372,6 +446,8 @@ def _create_index_build_job(
         ],
         "result": None,
         "error": None,
+        "trigger_source": "user_ui",
+        "job_type": "build_index",
         "created_at": now,
         "updated_at": now,
         "started_at": None,
@@ -534,9 +610,14 @@ def _run_index_build_job_legacy(job_id: str):
             user_id=user_id,
             data_path=data_path,
             index_name=index_name,
+            dataset_id=job.get("dataset_id"),
+            index_type=index_type,
+            distance_metric=distance_metric,
+            quantization_config=quantization_config,
             hnsw_params=hnsw_params,
             search_params=search_params,
             activate=activate,
+            created_by=user_id,
             progress_callback=on_progress,
             status_callback=on_status,
         )
@@ -602,6 +683,7 @@ def _run_index_build_job_guarded(job_id: str):
 def _public_index_build_job(job: dict) -> dict:
     return {
         "job_id": job["job_id"],
+        "dataset_id": job.get("dataset_id"),
         "status": job["status"],
         "stage": job["stage"],
         "index_type": job.get("index_type"),
@@ -624,6 +706,66 @@ def _public_index_build_job(job: dict) -> dict:
         "started_at": job["started_at"],
         "finished_at": job["finished_at"],
     }
+
+
+def _assert_manageable_target_user(actor: dict, target: dict, *, allow_self: bool = False):
+    if not target:
+        raise AuthError("user not found")
+    if not allow_self and int(actor["id"]) == int(target["id"]):
+        raise AuthError("cannot modify current logged-in user")
+    if target["role"] == "super_admin":
+        raise AuthError("super_admin account cannot be modified from this interface")
+    if _is_super_admin_user(actor):
+        return
+    if target["role"] != "user":
+        raise AuthError("only super_admin can manage admin accounts")
+
+
+def _assert_assignable_role(actor: dict, role: str):
+    normalized_role = str(role or "user").strip().lower()
+    if normalized_role not in {"user", "admin"}:
+        raise AuthError("only user or admin role can be assigned from this interface")
+    if normalized_role == "admin" and not _is_super_admin_user(actor):
+        raise AuthError("only super_admin can create or promote admin accounts")
+    return normalized_role
+
+
+def _record_admin_audit(action_type: str, *, detail=None, target_user=None, target_index=None, target_dataset=None):
+    actor = request.current_user
+    admin_store.create_audit_log(
+        actor_user_id=actor["id"],
+        actor_role=actor["role"],
+        action_type=action_type,
+        target_user_id=target_user.get("id") if target_user else None,
+        target_index_id=target_index.get("id") if target_index else None,
+        target_dataset_id=target_dataset.get("id") if target_dataset else None,
+        target_username=target_user.get("username") if target_user else None,
+        detail=detail or {},
+        ip_address=_client_ip(),
+    )
+
+
+def _delete_index_record(index_record: dict):
+    owner_user_id = index_record["user_id"]
+    collection_name = index_record["collection_name"]
+    _delete_collection_if_present(collection_name)
+    deleted_index = user_store.delete_user_index(owner_user_id, index_record["id"])
+    _remove_cached_index_build_jobs(owner_user_id, deleted_index["index_name"])
+
+    next_active_index = user_store.get_active_user_index(owner_user_id)
+    if deleted_index.get("is_active") or index.collection_name == collection_name:
+        try:
+            if next_active_index and index.collection_exists(next_active_index["collection_name"]):
+                index.set_active_collection(
+                    collection_name=next_active_index["collection_name"],
+                    vector_dim=next_active_index["vector_dim"],
+                    dataset_summary=_index_summary_from_record(next_active_index),
+                )
+            else:
+                index.clear_active_collection()
+        except RuntimeError:
+            index.clear_active_collection()
+    return deleted_index, next_active_index
 
 
 def _find_reusable_index_for_request(
@@ -671,7 +813,7 @@ def require_admin(view_func):
     @wraps(view_func)
     @require_auth
     def wrapper(*args, **kwargs):
-        if request.current_user["role"] != "admin":
+        if not _is_admin_user(request.current_user):
             return jsonify({"error": "admin role required"}), 403
         return view_func(*args, **kwargs)
 
@@ -758,6 +900,7 @@ def login():
         token, user = user_store.login(
             username=payload.get("username"),
             password=payload.get("password"),
+            ip_address=_client_ip(),
         )
         elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
     except AuthError as exc:
@@ -780,22 +923,48 @@ def current_user():
     return jsonify({"user": request.current_user})
 
 
+@app.get("/api/admin/overview")
+@require_admin
+def admin_overview():
+    return jsonify({"overview": admin_store.get_overview()})
+
+
 @app.get("/api/admin/users")
 @require_admin
 def list_users():
-    return jsonify({"users": user_store.list_users()})
+    return jsonify({"users": admin_store.list_users_with_stats()})
+
+
+@app.get("/api/admin/users/<int:user_id>")
+@require_admin
+def admin_user_detail(user_id):
+    try:
+        detail = admin_store.get_user_detail(user_id)
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(detail)
 
 
 @app.post("/api/admin/users")
 @require_admin
 def create_user():
     payload = request.get_json(silent=True) or {}
+    actor = request.current_user
 
     try:
+        requested_role = _assert_assignable_role(actor, payload.get("role", "user"))
         user = user_store.register(
             username=payload.get("username"),
             password=payload.get("password"),
-            role=payload.get("role", "user"),
+            role=requested_role,
+            created_by=actor["id"],
+            display_name=payload.get("display_name"),
+            email=payload.get("email"),
+        )
+        _record_admin_audit(
+            "user_create",
+            target_user=user,
+            detail={"assigned_role": requested_role},
         )
     except AuthError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -807,12 +976,36 @@ def create_user():
 @require_admin
 def update_user(user_id):
     payload = request.get_json(silent=True) or {}
+    actor = request.current_user
 
     try:
+        target_user = user_store.get_user(user_id)
+        _assert_manageable_target_user(actor, target_user)
+        next_role = payload.get("role")
+        if next_role is not None:
+            next_role = _assert_assignable_role(actor, next_role)
         user = user_store.update_user(
             user_id,
-            role=payload.get("role"),
+            role=next_role,
             is_active=payload.get("is_active"),
+            display_name=payload.get("display_name"),
+            email=payload.get("email"),
+            disabled_reason=payload.get("disabled_reason"),
+        )
+        action_type = "user_update"
+        if next_role is not None and next_role != target_user["role"]:
+            action_type = "user_change_role"
+        elif payload.get("is_active") is not None:
+            action_type = "user_enable" if bool(payload.get("is_active")) else "user_disable"
+        _record_admin_audit(
+            action_type,
+            target_user=user,
+            detail={
+                "role": next_role,
+                "is_active": payload.get("is_active"),
+                "display_name": payload.get("display_name"),
+                "email": payload.get("email"),
+            },
         )
     except AuthError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -820,18 +1013,193 @@ def update_user(user_id):
     return jsonify({"message": "user updated", "user": user})
 
 
+@app.post("/api/admin/users/<int:user_id>/reset-password")
+@require_admin
+def reset_admin_user_password(user_id):
+    payload = request.get_json(silent=True) or {}
+    actor = request.current_user
+    try:
+        target_user = user_store.get_user(user_id)
+        _assert_manageable_target_user(actor, target_user)
+        user = user_store.reset_user_password(user_id, payload.get("password"))
+        _record_admin_audit(
+            "user_reset_password",
+            target_user=user,
+            detail={"password_reset": True},
+        )
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"message": "password reset", "user": user})
+
+
 @app.delete("/api/admin/users/<int:user_id>")
 @require_admin
 def delete_user(user_id):
-    if request.current_user["id"] == user_id:
-        return jsonify({"error": "cannot delete current logged-in user"}), 400
-
+    actor = request.current_user
     try:
+        target_user = user_store.get_user(user_id)
+        _assert_manageable_target_user(actor, target_user)
+        indexes = user_store.list_user_indexes(user_id)
+        for index_record in indexes:
+            _delete_collection_if_present(index_record["collection_name"])
         user = user_store.delete_user(user_id)
+        _record_admin_audit(
+            "user_delete",
+            target_user=target_user,
+            detail={"deleted_index_count": len(indexes)},
+        )
     except AuthError as exc:
         return jsonify({"error": str(exc)}), 400
 
     return jsonify({"message": "user deleted", "user": user})
+
+
+@app.get("/api/admin/datasets")
+@require_admin
+def admin_datasets():
+    raw_owner_user_id = request.args.get("owner_user_id")
+    owner_user_id = None
+    if raw_owner_user_id not in (None, ""):
+        try:
+            owner_user_id = int(raw_owner_user_id)
+        except Exception as exc:
+            return jsonify({"error": f"invalid owner_user_id: {exc}"}), 400
+    return jsonify({"datasets": admin_store.list_datasets(owner_user_id=owner_user_id)})
+
+
+@app.delete("/api/admin/datasets/<int:dataset_id>")
+@require_admin
+def admin_delete_dataset(dataset_id):
+    try:
+        dataset = admin_store.get_dataset(dataset_id)
+        if not dataset:
+            raise AuthError("dataset not found")
+        _assert_manageable_target_user(
+            request.current_user,
+            {
+                "id": dataset["owner_user_id"],
+                "role": dataset.get("owner_role"),
+                "username": dataset.get("owner_username"),
+            },
+            allow_self=True,
+        )
+        related_indexes = admin_store.list_indexes(dataset_id=dataset_id)
+        for index_record in related_indexes:
+            target_user = {
+                "id": index_record["user_id"],
+                "role": index_record.get("owner_role"),
+                "username": index_record.get("owner_username"),
+            }
+            _assert_manageable_target_user(request.current_user, target_user, allow_self=True)
+            _delete_index_record(index_record)
+        deleted_dataset = admin_store.delete_dataset(dataset_id)
+        _record_admin_audit(
+            "dataset_delete",
+            target_dataset=deleted_dataset,
+            detail={"deleted_index_count": len(related_indexes)},
+        )
+    except AuthError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"message": "dataset deleted", "dataset": deleted_dataset})
+
+
+@app.get("/api/admin/indexes")
+@require_admin
+def admin_indexes():
+    raw_user_id = request.args.get("user_id")
+    raw_dataset_id = request.args.get("dataset_id")
+    user_id = None
+    dataset_id = None
+    try:
+        if raw_user_id not in (None, ""):
+            user_id = int(raw_user_id)
+        if raw_dataset_id not in (None, ""):
+            dataset_id = int(raw_dataset_id)
+    except Exception as exc:
+        return jsonify({"error": f"invalid filter: {exc}"}), 400
+    return jsonify({"indexes": admin_store.list_indexes(user_id=user_id, dataset_id=dataset_id)})
+
+
+@app.post("/api/admin/indexes/<int:index_id>/activate")
+@require_admin
+def admin_activate_index(index_id):
+    try:
+        index_record = admin_store.get_index(index_id)
+        if not index_record:
+            raise AuthError("index not found")
+        _assert_manageable_target_user(
+            request.current_user,
+            {
+                "id": index_record["user_id"],
+                "role": index_record.get("owner_role"),
+                "username": index_record.get("owner_username"),
+            },
+            allow_self=True,
+        )
+        _require_collection_exists(index_record["collection_name"])
+        activated = user_store.set_active_user_index(index_record["user_id"], index_id)
+        _record_admin_audit(
+            "index_force_activate",
+            target_index=activated,
+            detail={"owner_user_id": index_record["user_id"]},
+        )
+    except (AuthError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"message": "index activated", "index": activated})
+
+
+@app.delete("/api/admin/indexes/<int:index_id>")
+@require_admin
+def admin_delete_index(index_id):
+    try:
+        index_record = admin_store.get_index(index_id)
+        if not index_record:
+            raise AuthError("index not found")
+        _assert_manageable_target_user(
+            request.current_user,
+            {
+                "id": index_record["user_id"],
+                "role": index_record.get("owner_role"),
+                "username": index_record.get("owner_username"),
+            },
+            allow_self=True,
+        )
+        deleted_index, next_active_index = _delete_index_record(index_record)
+        _record_admin_audit(
+            "index_delete",
+            target_index=deleted_index,
+            detail={"owner_user_id": index_record["user_id"]},
+        )
+    except (AuthError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "message": "index deleted",
+            "index": deleted_index,
+            "next_active_index": next_active_index,
+        }
+    )
+
+
+@app.get("/api/admin/build-jobs")
+@require_admin
+def admin_build_jobs():
+    try:
+        limit = int(request.args.get("limit", 120))
+    except Exception as exc:
+        return jsonify({"error": f"invalid limit: {exc}"}), 400
+    return jsonify({"jobs": admin_store.list_build_jobs(limit=limit)})
+
+
+@app.get("/api/admin/audit-logs")
+@require_admin
+def admin_audit_logs():
+    try:
+        limit = int(request.args.get("limit", 120))
+    except Exception as exc:
+        return jsonify({"error": f"invalid limit: {exc}"}), 400
+    return jsonify({"logs": admin_store.list_audit_logs(limit=limit)})
 
 
 @app.post("/api/dataset/inspect")
@@ -839,9 +1207,11 @@ def delete_user(user_id):
 def inspect_dataset():
     payload = request.get_json(silent=True) or {}
     data_path = payload.get("data_path") or str(DEFAULT_SAMPLE_DATA)
+    user_id = request.current_user["id"]
 
     try:
         dataset_info = inspect_cell_dataset(data_path)
+        _ensure_dataset_record(user_id, data_path, dataset_info=dataset_info, status="ready")
     except Exception as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -902,6 +1272,13 @@ def build_index():
                 200,
             )
 
+    dataset_record = _ensure_dataset_record(
+        user_id,
+        data_path,
+        dataset_info=_seed_dataset_info(data_path),
+        status="indexing" if run_async else "ready",
+    )
+
     if run_async:
         existing_job = user_store.get_latest_running_build_job(user_id, data_path=data_path)
         if (
@@ -929,6 +1306,7 @@ def build_index():
         try:
             job = _create_index_build_job(
                 user_id=user_id,
+                dataset_id=dataset_record["id"] if dataset_record else None,
                 data_path=data_path,
                 index_name=index_name,
                 index_type=index_type,
@@ -960,12 +1338,14 @@ def build_index():
             user_id=user_id,
             data_path=data_path,
             index_name=index_name,
+            dataset_id=dataset_record["id"] if dataset_record else None,
             index_type=index_type,
             distance_metric=distance_metric,
             quantization_config=quantization_config,
             hnsw_params=hnsw_params,
             search_params=search_params,
             activate=activate,
+            created_by=user_id,
         )
     except AuthError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -983,7 +1363,7 @@ def index_build_job_status(job_id):
         return jsonify({"error": "build job not found"}), 404
 
     current_user = request.current_user
-    if job["user_id"] != current_user["id"] and current_user["role"] != "admin":
+    if job["user_id"] != current_user["id"] and not _is_admin_user(current_user):
         return jsonify({"error": "forbidden"}), 403
 
     return jsonify({"job": _public_index_build_job(job)})
@@ -1256,25 +1636,7 @@ def delete_index(index_id):
         index_record = user_store.get_user_index(user_id, index_id)
         if not index_record:
             raise AuthError("index not found")
-
-        collection_name = index_record["collection_name"]
-        index.delete_collection(collection_name)
-        deleted_index = user_store.delete_user_index(user_id, index_id)
-        _remove_cached_index_build_jobs(user_id, deleted_index["index_name"])
-
-        next_active_index = user_store.get_active_user_index(user_id)
-        if deleted_index.get("is_active") or index.collection_name == collection_name:
-            try:
-                if next_active_index and index.collection_exists(next_active_index["collection_name"]):
-                    index.set_active_collection(
-                        collection_name=next_active_index["collection_name"],
-                        vector_dim=next_active_index["vector_dim"],
-                        dataset_summary=_index_summary_from_record(next_active_index),
-                    )
-                else:
-                    index.clear_active_collection()
-            except RuntimeError:
-                index.clear_active_collection()
+        deleted_index, next_active_index = _delete_index_record(index_record)
     except (AuthError, ValueError, RuntimeError) as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -1749,12 +2111,14 @@ def _run_index_build_job(job_id: str):
             user_id=user_id,
             data_path=data_path,
             index_name=index_name,
+            dataset_id=job.get("dataset_id"),
             index_type=index_type,
             distance_metric=distance_metric,
             quantization_config=quantization_config,
             hnsw_params=hnsw_params,
             search_params=search_params,
             activate=activate,
+            created_by=user_id,
             progress_callback=on_progress,
             status_callback=on_status,
         )

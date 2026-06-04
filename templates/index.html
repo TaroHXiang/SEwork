@@ -96,8 +96,8 @@
 
         <section id="adminPanelSection" class="panel admin-panel d-none" hidden>
           <div class="panel-heading">
-            <h2 class="panel-title">系统管理</h2>
-            <p class="panel-description">管理员可统一查看账号状态，创建用户并执行基础账号管理操作。</p>
+            <h2 class="panel-title">Admin Dashboard</h2>
+            <p class="panel-description">管理员在此统一监管用户、数据集、索引、构建任务与审计日志。</p>
           </div>
 
           <div class="admin-summary-grid">
@@ -110,47 +110,177 @@
               <strong id="adminActiveUserCount" class="admin-summary-value">0</strong>
             </article>
             <article class="admin-summary-card">
+              <span class="admin-summary-label">停用账号</span>
+              <strong id="adminDisabledUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">数据集总数</span>
+              <strong id="adminDatasetCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">索引总数</span>
+              <strong id="adminIndexCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">失败任务</span>
+              <strong id="adminFailedJobCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
               <span class="admin-summary-label">管理员数量</span>
               <strong id="adminAdminCount" class="admin-summary-value">0</strong>
             </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">进行中任务</span>
+              <strong id="adminInProgressJobCount" class="admin-summary-value">0</strong>
+            </article>
           </div>
 
-          <div class="admin-grid">
-            <section class="subpanel admin-create-panel">
-              <div class="subpanel-title-row">
-                <h3 class="subpanel-title">创建用户</h3>
-                <span class="subpanel-tag">Admin</span>
-              </div>
-              <div class="admin-form-grid">
-                <div>
-                  <label class="form-label" for="adminCreateUsername">账号</label>
-                  <input id="adminCreateUsername" class="form-control dashboard-input" placeholder="请输入新账号">
-                </div>
-                <div>
-                  <label class="form-label" for="adminCreatePassword">密码</label>
-                  <input id="adminCreatePassword" type="password" class="form-control dashboard-input" placeholder="至少 6 位">
-                </div>
-                <div>
-                  <label class="form-label" for="adminCreateRole">角色</label>
-                  <select id="adminCreateRole" class="form-select dashboard-input">
-                    <option value="user">普通用户</option>
-                    <option value="admin">管理员</option>
-                  </select>
-                </div>
-                <div class="admin-create-submit">
-                  <button id="adminCreateUserBtn" type="button" class="btn btn-primary action-btn primary-btn w-100">创建用户</button>
-                </div>
-              </div>
-              <div id="adminMessage" class="status-message neutral-message">管理员可在此创建普通用户或团队内部管理员账号。</div>
-            </section>
+          <div class="admin-toolbar">
+            <div class="admin-tabs" id="adminTabs">
+              <button type="button" class="btn action-btn secondary-btn btn-sm is-active" data-admin-tab="overview">总览</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="users">用户</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="datasets">数据集</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="indexes">索引</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="jobs">任务</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="audit">审计</button>
+            </div>
+            <button id="adminRefreshDashboardBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新工作台</button>
+          </div>
 
-            <section class="subpanel admin-users-panel">
-              <div class="subpanel-title-row">
-                <h3 class="subpanel-title">用户管理</h3>
-                <div class="admin-panel-actions">
-                  <span id="adminUsersHint" class="subpanel-tag">同步中</span>
-                  <button id="adminRefreshUsersBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新列表</button>
+          <div id="adminMessage" class="status-message neutral-message">管理员工作台初始化中...</div>
+
+          <div id="adminOverviewTab" class="admin-tab-panel is-active">
+            <div class="admin-overview-grid">
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">索引类型分布</h3>
                 </div>
+                <div id="adminIndexTypeChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">距离度量分布</h3>
+                </div>
+                <div id="adminMetricChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">构建任务趋势</h3>
+                </div>
+                <div id="adminBuildTrendChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">用户索引 Top 10</h3>
+                </div>
+                <div id="adminTopUsersChart" class="admin-chart"></div>
+              </section>
+            </div>
+          </div>
+
+          <div id="adminUsersTab" class="admin-tab-panel">
+            <div class="admin-grid admin-grid-wide">
+              <section class="subpanel admin-create-panel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">创建用户</h3>
+                  <span class="subpanel-tag">Admin</span>
+                </div>
+                <div class="admin-form-grid">
+                  <div>
+                    <label class="form-label" for="adminCreateUsername">账号</label>
+                    <input id="adminCreateUsername" class="form-control dashboard-input" placeholder="请输入新账号">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateDisplayName">显示名</label>
+                    <input id="adminCreateDisplayName" class="form-control dashboard-input" placeholder="可选">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateEmail">邮箱</label>
+                    <input id="adminCreateEmail" class="form-control dashboard-input" placeholder="可选">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreatePassword">密码</label>
+                    <input id="adminCreatePassword" type="password" class="form-control dashboard-input" placeholder="至少 6 位">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateRole">角色</label>
+                    <select id="adminCreateRole" class="form-select dashboard-input">
+                      <option value="user">普通用户</option>
+                      <option value="admin">管理员</option>
+                    </select>
+                  </div>
+                  <div class="admin-create-submit">
+                    <button id="adminCreateUserBtn" type="button" class="btn btn-primary action-btn primary-btn w-100">创建用户</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="subpanel admin-users-panel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">用户管理</h3>
+                  <div class="admin-panel-actions">
+                    <span id="adminUsersHint" class="subpanel-tag">同步中</span>
+                  </div>
+                </div>
+                <div class="table-shell admin-table-shell">
+                  <div class="table-responsive">
+                    <table class="table results-table align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>账号</th>
+                          <th>显示名</th>
+                          <th>角色</th>
+                          <th>状态</th>
+                          <th>最近登录</th>
+                          <th>数据集</th>
+                          <th>索引</th>
+                          <th>最近任务</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="adminUsersBody">
+                        <tr>
+                          <td colspan="10" class="table-state">管理员列表尚未加载</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section class="subpanel admin-detail-panel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">用户详情</h3>
+                <span id="adminUserDetailHint" class="subpanel-tag">未选择用户</span>
+              </div>
+              <div id="adminUserDetailMeta" class="admin-detail-meta table-state">点击上方“详情”查看该用户的数据集、索引和任务情况。</div>
+              <div class="admin-detail-grid">
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">索引类型分布</h4>
+                  <div id="adminUserDetailChart" class="admin-chart admin-chart-sm"></div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">数据集</h4>
+                  <div id="adminUserDatasetsList" class="admin-detail-list table-state">--</div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">索引</h4>
+                  <div id="adminUserIndexesList" class="admin-detail-list table-state">--</div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">最近任务</h4>
+                  <div id="adminUserJobsList" class="admin-detail-list table-state">--</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminDatasetsTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">数据集管理</h3>
               </div>
               <div class="table-shell admin-table-shell">
                 <div class="table-responsive">
@@ -158,16 +288,112 @@
                     <thead>
                       <tr>
                         <th>ID</th>
-                        <th>账号</th>
-                        <th>角色</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>路径</th>
+                        <th>格式</th>
+                        <th>Cells</th>
+                        <th>Vector Dim</th>
                         <th>状态</th>
-                        <th>创建时间</th>
+                        <th>关联索引</th>
                         <th>操作</th>
                       </tr>
                     </thead>
-                    <tbody id="adminUsersBody">
+                    <tbody id="adminDatasetsBody">
                       <tr>
-                        <td colspan="6" class="table-state">管理员列表尚未加载</td>
+                        <td colspan="10" class="table-state">数据集列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminIndexesTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">索引管理</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>索引名</th>
+                        <th>类型</th>
+                        <th>距离</th>
+                        <th>构建参数</th>
+                        <th>状态</th>
+                        <th>更新时间</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminIndexesBody">
+                      <tr>
+                        <td colspan="10" class="table-state">索引列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminJobsTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">构建任务监管</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Job ID</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>索引名</th>
+                        <th>状态</th>
+                        <th>阶段</th>
+                        <th>更新时间</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminBuildJobsBody">
+                      <tr>
+                        <td colspan="7" class="table-state">任务列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminAuditTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">审计日志</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>操作人</th>
+                        <th>角色</th>
+                        <th>动作</th>
+                        <th>目标</th>
+                        <th>详情</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminAuditLogsBody">
+                      <tr>
+                        <td colspan="6" class="table-state">审计日志尚未加载</td>
                       </tr>
                     </tbody>
                   </table>

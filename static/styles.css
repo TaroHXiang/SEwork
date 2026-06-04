@@ -205,7 +205,9 @@ body {
   }
 
   .admin-grid,
-  .admin-summary-grid {
+  .admin-summary-grid,
+  .admin-overview-grid,
+  .admin-detail-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1168,7 +1170,7 @@ body {
 
 .admin-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 14px;
   margin-top: 18px;
 }
@@ -1198,6 +1200,53 @@ body {
   grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   gap: 18px;
   margin-top: 18px;
+}
+
+.admin-grid-wide {
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+}
+
+.admin-toolbar {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.admin-tabs .action-btn.is-active {
+  border-color: rgba(34, 211, 238, 0.34);
+  background: rgba(34, 211, 238, 0.14);
+  color: #ecfeff;
+}
+
+.admin-tab-panel {
+  display: none;
+  margin-top: 18px;
+}
+
+.admin-tab-panel.is-active {
+  display: block;
+}
+
+.admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.admin-chart {
+  min-height: 280px;
+}
+
+.admin-chart-sm {
+  min-height: 220px;
 }
 
 .admin-form-grid {
@@ -1233,6 +1282,48 @@ body {
   font-size: 12px;
 }
 
+.admin-detail-panel {
+  margin-top: 18px;
+}
+
+.admin-detail-meta {
+  margin-top: 14px;
+}
+
+.admin-detail-pairs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px 16px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.admin-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.admin-detail-card {
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.admin-detail-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+  color: var(--text-title);
+}
+
+.admin-detail-list {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 .table-pill {
   display: inline-flex;
   align-items: center;
@@ -1247,6 +1338,12 @@ body {
   color: #fde68a;
   background: rgba(251, 191, 36, 0.12);
   border-color: rgba(251, 191, 36, 0.26);
+}
+
+.table-pill.role-super-admin {
+  color: #f5d0fe;
+  background: rgba(168, 85, 247, 0.12);
+  border-color: rgba(168, 85, 247, 0.26);
 }
 
 .table-pill.role-user {
@@ -1265,6 +1362,12 @@ body {
   color: #fecaca;
   background: rgba(239, 68, 68, 0.12);
   border-color: rgba(239, 68, 68, 0.22);
+}
+
+.table-pill.status-pending {
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.24);
 }
 
 .danger-btn {
