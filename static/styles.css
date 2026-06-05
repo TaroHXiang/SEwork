@@ -2216,3 +2216,178 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* ========== 13. Readability And Contrast ========== */
+:root {
+  --bg-main: #111c2e;
+  --bg-card-primary: rgba(43, 60, 84, 0.96);
+  --bg-card-soft: rgba(49, 67, 93, 0.72);
+  --text-title: #ffffff;
+  --text-body: #e5edf7;
+  --text-muted: #b6c3d5;
+  --border-color: rgba(176, 196, 222, 0.34);
+  --glass-border-strong: rgba(176, 196, 222, 0.3);
+  --glass-border-soft: rgba(255, 255, 255, 0.13);
+}
+
+body {
+  background:
+    linear-gradient(135deg, #111c2e 0%, #15243a 48%, #101a2b 100%);
+  color: var(--text-body);
+}
+
+.panel,
+.viz-card,
+.history-card,
+.table-shell {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025)),
+    linear-gradient(165deg, rgba(25, 38, 58, 0.96), rgba(30, 45, 68, 0.9));
+  border-color: var(--glass-border-strong);
+}
+
+.subpanel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.02)),
+    rgba(31, 47, 71, 0.92);
+  border-color: rgba(176, 196, 222, 0.22);
+}
+
+.panel-description,
+.viz-description,
+.presentation-note,
+.status-note,
+.history-card-subtitle,
+.topbar-copy,
+.progress-caption,
+.table-state {
+  color: var(--text-muted);
+}
+
+/* Bootstrap table variables otherwise make body cells render nearly black. */
+.table.results-table {
+  --bs-table-color: #e8eff8;
+  --bs-table-bg: transparent;
+  --bs-table-border-color: rgba(176, 196, 222, 0.24);
+  --bs-table-striped-color: #edf4fb;
+  --bs-table-striped-bg: rgba(255, 255, 255, 0.035);
+  --bs-table-hover-color: #ffffff;
+  --bs-table-hover-bg: rgba(34, 211, 238, 0.1);
+  color: #e8eff8;
+}
+
+.table.results-table > :not(caption) > * > * {
+  color: inherit;
+  background-color: transparent;
+  border-bottom-color: rgba(176, 196, 222, 0.2);
+  box-shadow: none;
+}
+
+.results-table thead th {
+  color: #ffffff;
+  background: #17253a;
+  border-bottom-color: rgba(191, 219, 254, 0.38);
+}
+
+.results-table tbody td {
+  color: #e2eaf4;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.results-table tbody tr:nth-child(even) td {
+  background: rgba(148, 163, 184, 0.09);
+}
+
+.results-table tbody tr:hover td {
+  color: #ffffff;
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.results-table .cell-id {
+  color: #9bdcff;
+  font-weight: 600;
+}
+
+.dashboard-input,
+.form-select.dashboard-input {
+  color: #f4f7fb;
+  background-color: rgba(18, 30, 48, 0.9);
+  border-color: rgba(176, 196, 222, 0.3);
+}
+
+.dashboard-input::placeholder {
+  color: #9eacc0;
+  opacity: 1;
+}
+/* ========== 14. Results Pagination ========== */
+.results-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-top: 1px solid rgba(176, 196, 222, 0.22);
+  background: rgba(15, 28, 46, 0.78);
+}
+
+.results-page-summary {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.results-page-controls,
+.results-page-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.results-page-nav,
+.results-page-btn {
+  min-width: 38px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid rgba(176, 196, 222, 0.28);
+  border-radius: 6px;
+  background: rgba(30, 45, 68, 0.9);
+  color: #e5edf7;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.results-page-btn { padding: 0; }
+.results-page-nav:hover:not(:disabled),
+.results-page-btn:hover,
+.results-page-btn.is-active {
+  border-color: #38bdf8;
+  background: #1677d2;
+  color: #ffffff;
+}
+.results-page-nav:disabled { cursor: not-allowed; opacity: 0.42; }
+
+@media (max-width: 720px) {
+  .results-pagination { align-items: flex-start; flex-direction: column; }
+  .results-page-controls { width: 100%; overflow-x: auto; padding-bottom: 4px; }
+}
+/* ========== 15. Sample Chart Layout ========== */
+#sampleStackChart {
+  height: 300px;
+}
+
+#sampleSimilarityChart {
+  height: 270px;
+}
+
+.stats-card-body {
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  #sampleStackChart {
+    height: 320px;
+  }
+
+  #sampleSimilarityChart {
+    height: 290px;
+  }
+}

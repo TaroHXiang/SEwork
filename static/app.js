@@ -164,8 +164,14 @@ const recallMetric = document.querySelector("#recallMetric");
 const annTimeMetric = document.querySelector("#annTimeMetric");
 const exactTimeMetric = document.querySelector("#exactTimeMetric");
 const resultsBody = document.querySelector("#resultsBody");
+const resultsPagination = document.querySelector("#resultsPagination");
+const resultsPageSummary = document.querySelector("#resultsPageSummary");
+const resultsPageButtons = document.querySelector("#resultsPageButtons");
+const resultsPrevPage = document.querySelector("#resultsPrevPage");
+const resultsNextPage = document.querySelector("#resultsNextPage");
 
 const HIGHLIGHT_LIMIT = 100;
+const RESULTS_PAGE_SIZE = 10;
 const BUILD_JOB_POLL_MS = 1200;
 const BUILD_JOB_STORAGE_KEY = "sework.activeBuildJob";
 const DEFAULT_UMAP_LEVEL = "preview";
@@ -213,6 +219,7 @@ const state = {
   analyticsGlobal: null,
   qualityMetric: "gene",
   currentResults: [],
+  currentResultsPage: 1,
   buildJobId: null,
   buildPollTimer: null,
   buildJobContextPath: "",
@@ -1947,8 +1954,11 @@ function analyticsForCurrentView() {
     state.umapSelectionCellIds.length > 0 ||
     Object.keys(activeFilters()).length > 0 ||
     Boolean(state.chartFocus.key && state.chartFocus.value);
-  if (!usingLocalScope || !state.umapPoints.length) {
+  if (!state.umapPoints.length) {
     return state.analyticsGlobal;
+  }
+  if (!usingLocalScope) {
+    return state.analyticsGlobal || buildScopeAnalytics(state.umapPoints);
   }
   return buildScopeAnalytics(getCurrentScopePoints());
 }
@@ -2100,41 +2110,81 @@ function renderCellTypeCharts(analytics) {
   qualityChart.on("click", onCellTypeClick);
 }
 
+function compactChartLabel(value, maxLength = 12) {
+  const text = String(value || "-");
+  if (text.length <= maxLength) return text;
+  const edgeLength = Math.max(3, Math.floor((maxLength - 1) / 2));
+  return `${text.slice(0, edgeLength)}…${text.slice(-edgeLength)}`;
+}
+
 function renderSampleCharts(analytics) {
   const stackChart = getOrCreateChart("sampleStack", sampleStackChartElement);
   const similarityChart = getOrCreateChart("sampleSimilarity", sampleSimilarityChartElement);
   const sampleDistribution = analytics?.sample_distribution || {};
-  const samples = sampleDistribution.samples || [];
-  const series = sampleDistribution.series || [];
+  const allSamples = sampleDistribution.samples || [];
+  const allSeries = sampleDistribution.series || [];
   const similarity = sampleDistribution.similarity || { labels: [], matrix: [] };
   if (!stackChart || !similarityChart) return;
-  if (!samples.length || !series.length) {
+  if (!allSamples.length || !allSeries.length) {
     stackChart.setOption(noDataOption("暂无样本来源统计"), true);
     similarityChart.setOption(noDataOption("暂无样本相似矩阵"), true);
     return;
   }
 
+  const sampleLimit = 8;
+  const seriesLimit = 6;
+  const samples = allSamples.slice(0, sampleLimit);
+  const visibleSeries = allSeries.slice(0, seriesLimit).map((item) => ({
+    ...item,
+    data: (item.data || []).slice(0, sampleLimit),
+  }));
+  const similarityLabels = (similarity.labels || []).slice(0, sampleLimit);
+  const similarityMatrix = (similarity.matrix || []).filter(
+    (item) => Number(item?.[0]) < sampleLimit && Number(item?.[1]) < sampleLimit
+  );
+
   stackChart.setOption(
     {
       animationDuration: 220,
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-      legend: { top: 0, textStyle: { color: "#cbd5e1" } },
-      grid: { left: 50, right: 18, top: 38, bottom: 44 },
+      color: ["#5b7bd5", "#8acb72", "#ffc857", "#ef6461", "#67b7d1", "#43aa7b"],
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        confine: true,
+      },
+      legend: {
+        type: "scroll",
+        top: 8,
+        left: 12,
+        right: 12,
+        itemWidth: 16,
+        itemHeight: 10,
+        textStyle: { color: "#d7e0ec", fontSize: 11 },
+        pageTextStyle: { color: "#b6c3d5" },
+      },
+      grid: { left: 48, right: 16, top: 74, bottom: 76, containLabel: false },
       xAxis: {
         type: "category",
         data: samples,
-        axisLabel: { color: "#94a3b8", rotate: 14 },
-        axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+        axisLabel: {
+          color: "#aebcd0",
+          rotate: 28,
+          interval: 0,
+          fontSize: 10,
+          formatter: (value) => compactChartLabel(value, 11),
+        },
+        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
       },
       yAxis: {
         type: "value",
-        axisLabel: { color: "#94a3b8" },
-        splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+        axisLabel: { color: "#aebcd0", fontSize: 10 },
+        splitLine: { lineStyle: { color: "rgba(176,196,222,0.1)" } },
       },
-      series: series.map((item) => ({
+      series: visibleSeries.map((item) => ({
         ...item,
         type: "bar",
         stack: "total",
+        barMaxWidth: 30,
         emphasis: { focus: "series" },
       })),
     },
@@ -2145,23 +2195,34 @@ function renderSampleCharts(analytics) {
     {
       animationDuration: 220,
       tooltip: {
+        confine: true,
         formatter(params) {
           const [row, col, score] = params.data || [];
-          return `${escapeHtml(similarity.labels[row] || "-")} vs ${escapeHtml(similarity.labels[col] || "-")}<br>相似度: ${escapeHtml(formatMetric(score))}`;
+          return `${escapeHtml(similarityLabels[row] || "-")} vs ${escapeHtml(similarityLabels[col] || "-")}<br>相似度: ${escapeHtml(formatMetric(score))}`;
         },
       },
-      grid: { left: 62, right: 12, top: 20, bottom: 50 },
+      grid: { left: 82, right: 14, top: 18, bottom: 72 },
       xAxis: {
         type: "category",
-        data: similarity.labels || [],
-        axisLabel: { color: "#94a3b8", rotate: 18 },
-        axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+        data: similarityLabels,
+        axisLabel: {
+          color: "#aebcd0",
+          rotate: 28,
+          interval: 0,
+          fontSize: 10,
+          formatter: (value) => compactChartLabel(value, 9),
+        },
+        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
       },
       yAxis: {
         type: "category",
-        data: similarity.labels || [],
-        axisLabel: { color: "#94a3b8" },
-        axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+        data: similarityLabels,
+        axisLabel: {
+          color: "#aebcd0",
+          fontSize: 10,
+          formatter: (value) => compactChartLabel(value, 9),
+        },
+        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
       },
       visualMap: {
         min: 0,
@@ -2169,15 +2230,19 @@ function renderSampleCharts(analytics) {
         calculable: false,
         orient: "horizontal",
         left: "center",
-        bottom: 0,
-        textStyle: { color: "#94a3b8" },
+        bottom: 8,
+        itemWidth: 12,
+        itemHeight: 150,
+        text: ["高", "低"],
+        textGap: 8,
+        textStyle: { color: "#aebcd0", fontSize: 10 },
       },
       series: [
         {
           type: "heatmap",
-          data: similarity.matrix || [],
+          data: similarityMatrix,
           label: { show: false },
-          emphasis: { itemStyle: { borderColor: "#fff", borderWidth: 1 } },
+          emphasis: { itemStyle: { borderColor: "#ffffff", borderWidth: 1 } },
         },
       ],
     },
@@ -2190,7 +2255,7 @@ function renderSampleCharts(analytics) {
   similarityChart.on("click", (params) => {
     const row = params?.data?.[0];
     if (row === undefined) return;
-    applyChartFocus("sample_id", similarity.labels[row] || "");
+    applyChartFocus("sample_id", similarityLabels[row] || "");
   });
 }
 
@@ -2502,54 +2567,109 @@ function isBuildContextCurrent(job = null) {
   return normalizePathToken(state.currentDataPath) === normalizePathToken(state.buildJobContextPath);
 }
 
-function focusResultRow(cellId) {
-  if (!cellId || !resultsBody) return;
-  const rows = resultsBody.querySelectorAll("tr[data-cell-id]");
+async function focusResultRow(cellId) {
+  if (!resultsBody) return false;
+  if (!cellId) {
+    resultsBody.querySelectorAll("tr[data-cell-id]").forEach((row) => row.classList.remove("is-active"));
+    return false;
+  }
+
+  const resultIndex = state.currentResults.findIndex((item) => item.cell_id === cellId);
+  if (resultIndex < 0) return false;
+
+  const targetPage = Math.floor(resultIndex / RESULTS_PAGE_SIZE) + 1;
+  if (targetPage !== state.currentResultsPage) {
+    state.currentResultsPage = targetPage;
+    await renderCurrentResultsPage();
+  }
+
   let matchedRow = null;
-  rows.forEach((row) => {
+  resultsBody.querySelectorAll("tr[data-cell-id]").forEach((row) => {
     const isActive = row.dataset.cellId === cellId;
     row.classList.toggle("is-active", isActive);
     if (isActive) matchedRow = row;
   });
   if (matchedRow) {
-    matchedRow.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    matchedRow.scrollIntoView({ behavior: "smooth", block: "center" });
+    return true;
   }
+  return false;
 }
 
 function focusCellOnUmap(cellId) {
   selectCell(cellId || "", { syncRow: false });
 }
 
+function applyUmapBrushSelection(cellIds = []) {
+  state.umapSelectionCellIds = Array.from(new Set(cellIds.filter(Boolean)));
+  if (state.umapSelectionCellIds.length === 1) {
+    state.umapFocusedCellId = state.umapSelectionCellIds[0];
+    renderCellDetail(state.umapFocusedCellId);
+  } else {
+    state.umapFocusedCellId = "";
+    renderCellDetail("");
+  }
+  renderUmapFromState();
+  renderAnalyticsForCurrentState();
+  setMessage(
+    queryStatus,
+    state.umapSelectionCellIds.length
+      ? `已框选 ${state.umapSelectionCellIds.length} 个细胞，左侧已切换为选区统计。`
+      : "框选已清除，左侧已恢复全局统计。",
+    "neutral"
+  );
+}
+
+function cellIdsFromBrushAreas(areas = []) {
+  const selected = [];
+  for (const area of areas) {
+    const range = area?.coordRange;
+    if (!Array.isArray(range) || !Array.isArray(range[0]) || !Array.isArray(range[1])) continue;
+    const xMin = Math.min(Number(range[0][0]), Number(range[0][1]));
+    const xMax = Math.max(Number(range[0][0]), Number(range[0][1]));
+    const yMin = Math.min(Number(range[1][0]), Number(range[1][1]));
+    const yMax = Math.max(Number(range[1][0]), Number(range[1][1]));
+    if (![xMin, xMax, yMin, yMax].every(Number.isFinite)) continue;
+    state.umapFilteredPoints.forEach((point) => {
+      if (point.x >= xMin && point.x <= xMax && point.y >= yMin && point.y <= yMax) {
+        selected.push(point.cell_id);
+      }
+    });
+  }
+  return selected;
+}
 function initUmapChartIfNeeded() {
   if (state.umapChart || !window.echarts || !umapChartElement) return;
   state.umapChart = window.echarts.init(umapChartElement, null, { renderer: "canvas" });
   state.umapChart.setOption(buildUmapOption([], [], null, null));
-  state.umapChart.on("click", (params) => {
+  state.umapChart.on("click", async (params) => {
     const cellId = params?.data?.cell_id;
     if (!cellId) return;
-    focusResultRow(cellId);
     selectCell(cellId, { syncRow: false });
+    const located = await focusResultRow(cellId);
+    if (!located && state.currentResults.length) {
+      setMessage(queryStatus, "该细胞不在当前 Top-K 查询结果中，已在右侧显示细胞详情。", "neutral");
+    }
   });
   state.umapChart.on("brushSelected", (params) => {
-    const selectedIndices = [];
+    const selectedCellIds = [];
     const batches = Array.isArray(params?.batch) ? params.batch : [];
     batches.forEach((batch) => {
       (batch.selected || []).forEach((item) => {
         if (item.seriesIndex !== 0) return;
         (item.dataIndex || []).forEach((index) => {
           const point = state.umapFilteredPoints[index];
-          if (point?.cell_id) selectedIndices.push(point.cell_id);
+          if (point?.cell_id) selectedCellIds.push(point.cell_id);
         });
       });
     });
-    state.umapSelectionCellIds = Array.from(new Set(selectedIndices));
-    if (state.umapSelectionCellIds.length <= 1) {
-      renderCellDetail(state.umapSelectionCellIds[0] || state.umapFocusedCellId);
-    } else {
-      state.umapFocusedCellId = "";
-      renderCellDetail("");
+    if (selectedCellIds.length) {
+      applyUmapBrushSelection(selectedCellIds);
     }
-    renderAnalyticsForCurrentState();
+  });
+  state.umapChart.on("brushEnd", (params) => {
+    const areas = Array.isArray(params?.areas) ? params.areas : [];
+    applyUmapBrushSelection(cellIdsFromBrushAreas(areas));
   });
   window.addEventListener("resize", () => {
     resizeAllCharts();
@@ -2903,47 +3023,81 @@ async function setTableHtmlWithTransition(html) {
   });
 }
 
+function setResultsPaginationVisible(visible) {
+  if (!resultsPagination) return;
+  resultsPagination.hidden = !visible;
+  resultsPagination.classList.toggle("d-none", !visible);
+}
+
+function updateResultsPagination() {
+  const totalResults = state.currentResults.length;
+  const totalPages = Math.max(1, Math.ceil(totalResults / RESULTS_PAGE_SIZE));
+  state.currentResultsPage = Math.min(Math.max(1, state.currentResultsPage), totalPages);
+  setResultsPaginationVisible(totalResults > RESULTS_PAGE_SIZE);
+
+  if (resultsPageSummary) {
+    const start = totalResults ? (state.currentResultsPage - 1) * RESULTS_PAGE_SIZE + 1 : 0;
+    const end = Math.min(state.currentResultsPage * RESULTS_PAGE_SIZE, totalResults);
+    resultsPageSummary.textContent = `显示 ${start}-${end} 条，共 ${totalResults} 条`;
+  }
+  if (resultsPrevPage) resultsPrevPage.disabled = state.currentResultsPage <= 1;
+  if (resultsNextPage) resultsNextPage.disabled = state.currentResultsPage >= totalPages;
+  if (resultsPageButtons) {
+    resultsPageButtons.innerHTML = Array.from({ length: totalPages }, (_, index) => {
+      const page = index + 1;
+      const activeClass = page === state.currentResultsPage ? " is-active" : "";
+      return `<button type="button" class="results-page-btn${activeClass}" data-results-page="${page}" aria-label="第 ${page} 页">${page}</button>`;
+    }).join("");
+  }
+}
+
 async function showTableState(message, tone = "neutral") {
+  setResultsPaginationVisible(false);
   const stateClass = tone === "error" ? "table-state is-error" : "table-state";
   await setTableHtmlWithTransition(`<tr><td colspan="8" class="${stateClass}">${escapeHtml(message)}</td></tr>`);
 }
 
-async function renderResults(results = []) {
-  state.currentResults = Array.isArray(results) ? results : [];
-  if (!Array.isArray(results) || results.length === 0) {
-    state.umapFocusedCellId = "";
-    renderCellDetail("");
-    await showTableState("No results. Adjust query or filters.");
-    return;
-  }
-
-  const html = results
-    .map((item, idx) => {
-      const md = item.metadata || {};
-      return `
-        <tr class="is-clickable" data-cell-id="${escapeHtml(item.cell_id)}">
-          <td>${idx + 1}</td>
-          <td class="cell-id">${escapeHtml(item.cell_id)}</td>
-          <td>${escapeHtml(formatMetric(item.distance))}</td>
-          <td>${escapeHtml(formatMetric(item.score))}</td>
-          <td>${escapeHtml(md.cell_type || "-")}</td>
-          <td>${escapeHtml(md.disease || "-")}</td>
-          <td>${escapeHtml(md.AgeGroup || "-")}</td>
-          <td>${escapeHtml(md.sex || "-")}</td>
-        </tr>
-      `;
-    })
-    .join("");
+async function renderCurrentResultsPage() {
+  const totalPages = Math.max(1, Math.ceil(state.currentResults.length / RESULTS_PAGE_SIZE));
+  state.currentResultsPage = Math.min(Math.max(1, state.currentResultsPage), totalPages);
+  const startIndex = (state.currentResultsPage - 1) * RESULTS_PAGE_SIZE;
+  const pageResults = state.currentResults.slice(startIndex, startIndex + RESULTS_PAGE_SIZE);
+  const html = pageResults.map((item, idx) => {
+    const md = item.metadata || {};
+    return `
+      <tr class="is-clickable" data-cell-id="${escapeHtml(item.cell_id)}">
+        <td>${startIndex + idx + 1}</td>
+        <td class="cell-id">${escapeHtml(item.cell_id)}</td>
+        <td>${escapeHtml(formatMetric(item.distance))}</td>
+        <td>${escapeHtml(formatMetric(item.score))}</td>
+        <td>${escapeHtml(md.cell_type || "-")}</td>
+        <td>${escapeHtml(md.disease || "-")}</td>
+        <td>${escapeHtml(md.AgeGroup || "-")}</td>
+        <td>${escapeHtml(md.sex || "-")}</td>
+      </tr>`;
+  }).join("");
 
   await setTableHtmlWithTransition(html);
-  const rows = resultsBody.querySelectorAll("tr[data-cell-id]");
-  rows.forEach((row) => {
+  updateResultsPagination();
+  resultsBody.querySelectorAll("tr[data-cell-id]").forEach((row) => {
     row.addEventListener("click", () => {
       const cellId = row.dataset.cellId || "";
       focusResultRow(cellId);
       selectCell(cellId, { syncRow: false });
     });
   });
+}
+
+async function renderResults(results = []) {
+  state.currentResults = Array.isArray(results) ? results : [];
+  state.currentResultsPage = 1;
+  if (!state.currentResults.length) {
+    state.umapFocusedCellId = "";
+    renderCellDetail("");
+    await showTableState("No results. Adjust query or filters.");
+    return;
+  }
+  await renderCurrentResultsPage();
 }
 
 function resetMainPageOutputs() {
@@ -3760,6 +3914,21 @@ async function enterAfterLogin(token, user) {
 
 window.__seworkAfterLogin = enterAfterLogin;
 
+if (resultsPagination) {
+  resultsPagination.addEventListener("click", (event) => {
+    const pageButton = event.target.closest("[data-results-page]");
+    if (pageButton) {
+      state.currentResultsPage = Number(pageButton.dataset.resultsPage) || 1;
+    } else if (event.target.closest("#resultsPrevPage")) {
+      state.currentResultsPage -= 1;
+    } else if (event.target.closest("#resultsNextPage")) {
+      state.currentResultsPage += 1;
+    } else {
+      return;
+    }
+    renderCurrentResultsPage().catch(() => undefined);
+  });
+}
 logoutBtn.addEventListener("click", clearSession);
 hubLogoutBtn.addEventListener("click", clearSession);
 
