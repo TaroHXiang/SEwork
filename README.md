@@ -121,7 +121,7 @@ pip install -r requirements.txt
 ### 5.1 克隆或进入项目目录
 
 ```powershell
-cd d:\HuaweiMoveData\Users\20105\Documents\xinan\dasanxia\软件工程\大作业\homework_final\SEwork
+cd SEwork
 ```
 
 ### 5.2 启动 Docker 依赖服务
