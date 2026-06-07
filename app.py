@@ -825,6 +825,16 @@ def home():
     return render_template("index.html")
 
 
+@app.route("/docs/user-manual")
+def user_manual():
+    return render_template("user_manual.html")
+
+
+@app.route("/docs/admin-manual")
+def admin_manual():
+    return render_template("admin_manual.html")
+
+
 @app.get("/api/health")
 def health():
     token = _get_bearer_token()

@@ -62,6 +62,8 @@
         </div>
         <div class="topbar-actions">
           <span id="hubAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
+          <a id="hubUserManualLink" href="{{ url_for('user_manual') }}" target="_blank" rel="noopener" class="action-link">用户手册</a>
+          <a id="hubAdminManualLink" href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link d-none" hidden>管理员手册</a>
           <span id="hubCurrentUserLabel" class="user-label">--</span>
           <button id="hubLogoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
         </div>
@@ -144,7 +146,10 @@
               <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="jobs">任务</button>
               <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="audit">审计</button>
             </div>
-            <button id="adminRefreshDashboardBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新工作台</button>
+            <div class="admin-toolbar-actions">
+              <a href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link action-link-strong">管理员手册</a>
+              <button id="adminRefreshDashboardBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新工作台</button>
+            </div>
           </div>
 
           <div id="adminMessage" class="status-message neutral-message">管理员工作台初始化中...</div>
@@ -418,7 +423,8 @@
           <span id="mainAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
           <button id="backToHubBtn" type="button" class="btn action-btn secondary-btn btn-sm">返回历史页</button>
           <span id="currentDatasetLabel" class="user-label">--</span>
-          <a href="https://github.com" target="_blank" class="action-link">帮助文档</a>
+          <a id="mainUserManualLink" href="{{ url_for('user_manual') }}" target="_blank" rel="noopener" class="action-link">帮助文档</a>
+          <a id="mainAdminManualLink" href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link d-none" hidden>管理员手册</a>
           <span id="currentUserLabel" class="user-label">--</span>
           <button id="logoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
         </div>

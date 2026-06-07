@@ -11,6 +11,8 @@ const currentUserLabel = document.querySelector("#currentUserLabel");
 const hubCurrentUserLabel = document.querySelector("#hubCurrentUserLabel");
 const hubAdminBadge = document.querySelector("#hubAdminBadge");
 const mainAdminBadge = document.querySelector("#mainAdminBadge");
+const hubAdminManualLink = document.querySelector("#hubAdminManualLink");
+const mainAdminManualLink = document.querySelector("#mainAdminManualLink");
 
 const historyCards = document.querySelector("#historyCards");
 const hubHistoryMessage = document.querySelector("#hubHistoryMessage");
@@ -1637,6 +1639,8 @@ function applyRoleUI() {
   const admin = isAdmin();
   toggleAdminOnly(hubAdminBadge, admin);
   toggleAdminOnly(mainAdminBadge, admin);
+  toggleAdminOnly(hubAdminManualLink, admin);
+  toggleAdminOnly(mainAdminManualLink, admin);
   toggleAdminOnly(adminPanelSection, admin);
   if (adminCreateRole) {
     const adminOption = Array.from(adminCreateRole.options || []).find((item) => item.value === "admin");
