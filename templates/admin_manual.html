@@ -3,20 +3,24 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>管理员手册 - 单细胞相似性检索系统</title>
+    <title>管理员与开发者手册 - 单细胞相似性检索系统</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
-  <body>
+  <body class="docs-page">
     <div class="docs-shell">
-      <header class="docs-hero">
-        <div>
-          <p class="docs-kicker">Admin Manual</p>
-          <h1 class="docs-title">单细胞相似性检索系统管理员手册</h1>
-          <p class="docs-lead">本手册面向管理员和超级管理员，说明用户管理、数据集治理、索引管理、任务监管和审计检查等后台操作。</p>
+      <header class="docs-topbar">
+        <div class="docs-brand">
+          <span class="docs-brand-mark" aria-hidden="true">
+            <span class="docs-brand-dot"></span>
+          </span>
+          <div>
+            <p class="docs-brand-kicker">CellSearch Docs</p>
+            <h1 class="docs-brand-title">管理员与开发者文档中心</h1>
+          </div>
         </div>
         <div class="docs-actions">
           <a href="{{ url_for('home') }}" class="btn action-btn secondary-btn">返回系统首页</a>
@@ -24,91 +28,215 @@
         </div>
       </header>
 
+      <header class="docs-hero">
+        <div class="docs-hero-copy">
+          <div class="docs-hero-heading">
+            <p class="docs-kicker">Admin & Developer Manual</p>
+            <span class="docs-hero-badge">运维 / 安全 / RAG</span>
+          </div>
+          <h2 class="docs-title">单细胞相似性检索系统管理员与开发者手册</h2>
+          <p class="docs-lead">本手册面向管理员、超级管理员和项目维护者，说明系统部署、环境变量、知识库维护、RAG 索引构建、安全配置，以及后台管理与运维操作。</p>
+          <div class="docs-hero-metrics">
+            <article class="docs-metric-card">
+              <span class="docs-metric-label">Audience</span>
+              <strong class="docs-metric-value">Admin / Super Admin</strong>
+            </article>
+            <article class="docs-metric-card">
+              <span class="docs-metric-label">Core Topics</span>
+              <strong class="docs-metric-value">Deploy · Security · Jobs</strong>
+            </article>
+            <article class="docs-metric-card">
+              <span class="docs-metric-label">Knowledge</span>
+              <strong class="docs-metric-value">RAG Index & Source Paths</strong>
+            </article>
+            <article class="docs-metric-card">
+              <span class="docs-metric-label">Purpose</span>
+              <strong class="docs-metric-value">稳定运维与责任追踪</strong>
+            </article>
+          </div>
+        </div>
+        <aside class="docs-hero-panel">
+          <div class="docs-hero-panel-block">
+            <p class="docs-panel-kicker">Quick Start</p>
+            <ol class="docs-panel-list">
+              <li>检查 `.env` 与 Docker 依赖</li>
+              <li>安装脚本依赖并构建知识索引</li>
+              <li>启动主应用与后台管理</li>
+            </ol>
+          </div>
+          <div class="docs-hero-panel-block">
+            <p class="docs-panel-kicker">Recommended Reading</p>
+            <div class="docs-inline-links">
+              <a href="#deploy" class="docs-inline-link">部署与依赖</a>
+              <a href="#knowledge" class="docs-inline-link">知识库与 RAG</a>
+              <a href="#audit" class="docs-inline-link">审计与运维建议</a>
+            </div>
+          </div>
+        </aside>
+      </header>
+
       <main class="docs-grid">
-        <aside class="docs-toc">
-          <h2 class="docs-toc-title">目录</h2>
-          <a href="#roles" class="docs-toc-link">1. 角色说明</a>
-          <a href="#overview" class="docs-toc-link">2. 管理总览</a>
-          <a href="#users" class="docs-toc-link">3. 用户管理</a>
-          <a href="#datasets" class="docs-toc-link">4. 数据集管理</a>
-          <a href="#indexes" class="docs-toc-link">5. 索引管理</a>
-          <a href="#jobs" class="docs-toc-link">6. 构建任务监管</a>
-          <a href="#audit" class="docs-toc-link">7. 审计日志</a>
-          <a href="#bootstrap" class="docs-toc-link">8. 管理员初始化</a>
-          <a href="#rules" class="docs-toc-link">9. 操作建议</a>
+        <aside class="docs-sidebar">
+          <section class="docs-toc">
+            <h2 class="docs-toc-title">目录</h2>
+            <a href="#roles" class="docs-toc-link">1. 角色与系统组成</a>
+            <a href="#deploy" class="docs-toc-link">2. 部署与依赖</a>
+            <a href="#env" class="docs-toc-link">3. 环境变量与安全</a>
+            <a href="#knowledge" class="docs-toc-link">4. 知识库与 RAG</a>
+            <a href="#admin-ops" class="docs-toc-link">5. 后台管理操作</a>
+            <a href="#jobs" class="docs-toc-link">6. 构建与任务监管</a>
+            <a href="#bootstrap" class="docs-toc-link">7. 管理员初始化</a>
+            <a href="#audit" class="docs-toc-link">8. 审计与运维建议</a>
+            <a href="#faq" class="docs-toc-link">9. 常见问题</a>
+          </section>
+          <section class="docs-side-card">
+            <p class="docs-side-card-kicker">Ops Focus</p>
+            <h2 class="docs-side-card-title">管理员阅读顺序</h2>
+            <ul class="docs-side-card-list">
+              <li>先读部署与环境变量</li>
+              <li>再看知识库与构建任务</li>
+              <li>最后关注审计与账号管理</li>
+            </ul>
+          </section>
         </aside>
 
         <section class="docs-content">
           <article id="roles" class="docs-section">
-            <h2>1. 角色说明</h2>
+            <h2>1. 角色与系统组成</h2>
             <ul>
               <li><strong>user</strong>：普通用户，只能使用自己的数据与索引</li>
               <li><strong>admin</strong>：管理员，可管理普通用户相关资源</li>
               <li><strong>super_admin</strong>：超级管理员，可进一步管理管理员账号</li>
             </ul>
+            <p>当前项目由 3 个核心部分组成：</p>
+            <ul>
+              <li><strong>Flask 主应用</strong>：负责页面、认证、业务接口与 RAG 编排</li>
+              <li><strong>MySQL</strong>：保存用户、数据集、索引记录、构建任务和审计日志</li>
+              <li><strong>独立 FAISS 服务</strong>：负责向量索引构建、检索和可视化数据读取</li>
+            </ul>
             <div class="docs-note">
-              普通用户无法自助提升为管理员。管理员账号应由项目维护者预置和分发。
+              普通用户无法自助提升为管理员。管理员账号应由项目维护者预置和分发；如果需要公开发布，建议同时准备用户手册、管理员与开发者手册以及 `.env.example`。
             </div>
           </article>
 
-          <article id="overview" class="docs-section">
-            <h2>2. 管理总览</h2>
-            <p>管理员登录后，在历史页可看到 <strong>Admin Dashboard</strong>。该区域用于统一查看系统运行情况。</p>
-            <p>总览区域重点指标包括：</p>
+          <article id="deploy" class="docs-section">
+            <h2>2. 部署与依赖</h2>
+            <p>推荐的本地部署顺序如下：</p>
+            <ol>
+              <li>复制 `.env.example` 为 `.env` 并填入真实值</li>
+              <li>启动 Docker 依赖服务：<code>docker compose up -d --build mysql faiss</code></li>
+              <li>安装主应用依赖：<code>pip install -r requirements-app.txt</code></li>
+              <li>如需运行数据处理或知识索引脚本，再安装：<code>pip install -r requirements-tools.txt</code></li>
+              <li>构建知识索引：<code>python scripts/build_knowledge_index.py --batch-size 256 --log-dir logs --resume</code></li>
+              <li>启动主应用：<code>python app.py</code></li>
+            </ol>
+            <p>依赖文件按用途拆分为：</p>
             <ul>
-              <li>用户总数、启用账号、停用账号</li>
-              <li>数据集总数、索引总数</li>
-              <li>失败任务数、进行中任务数</li>
-              <li>管理员数量</li>
+              <li><code>requirements-common.txt</code>：主应用与 FAISS 服务共享基础依赖</li>
+              <li><code>requirements-faiss.txt</code>：FAISS 服务专用依赖</li>
+              <li><code>requirements-app.txt</code>：主应用额外依赖</li>
+              <li><code>requirements-tools.txt</code>：脚本与数据处理依赖</li>
             </ul>
-            <p>同时还会展示索引类型分布、距离度量分布、构建趋势和用户索引 Top 10 图表。</p>
+            <div class="docs-note">
+              `Dockerfile.faiss` 只安装 FAISS 服务需要的依赖，避免把 RAG 和脚本依赖一起塞进向量服务镜像；`.dockerignore` 也应排除 `data/`、`knowledge/` 等大目录，减少构建上下文体积。
+            </div>
           </article>
 
-          <article id="users" class="docs-section">
-            <h2>3. 用户管理</h2>
-            <h3>3.1 创建用户</h3>
+          <article id="env" class="docs-section">
+            <h2>3. 环境变量与安全</h2>
+            <p>部署者应从 `.env.example` 开始配置环境变量，而不是把真实密码或 API Key 写死在代码里。</p>
             <ul>
-              <li>填写账号、显示名、邮箱和密码</li>
-              <li>默认可创建普通用户</li>
-              <li>只有超级管理员可以直接创建管理员</li>
+              <li><code>DATABASE_URL</code>：Flask 主应用连接 MySQL 的地址</li>
+              <li><code>MYSQL_PASSWORD</code>：MySQL 用户密码</li>
+              <li><code>MYSQL_ROOT_PASSWORD</code>：MySQL root 密码</li>
+              <li><code>SECRET_KEY</code>：登录令牌签名密钥</li>
+              <li><code>ZHIPU_API_KEY</code>：AI 助手所需的大模型密钥</li>
+              <li><code>FAISS_SERVICE_URL</code>：Flask 主应用调用 FAISS 服务的地址</li>
+              <li><code>SEWORK_KNOWLEDGE_INDEX_DIR</code>：知识索引输出目录，默认是 <code>knowledge/index</code></li>
+              <li><code>SEWORK_USER_KB_PATHS</code>：用户扩展知识文件路径</li>
             </ul>
-            <h3>3.2 修改用户</h3>
-            <ul>
-              <li>可修改显示名、邮箱、启用状态</li>
-              <li>可对普通用户进行启用或停用</li>
-              <li>超级管理员可在 <code>user</code> 与 <code>admin</code> 之间切换角色</li>
-            </ul>
-            <h3>3.3 重置密码</h3>
-            <p>当用户遗忘密码或账号交接时，可在后台执行密码重置。</p>
-            <h3>3.4 删除用户</h3>
-            <p>删除用户前应确认其索引和数据集是否仍被需要。系统会联动删除该用户相关索引记录。</p>
+            <p>当前 `docker-compose.yml` 中的 MySQL 密码已改为环境变量引用：</p>
+            <pre><code>MYSQL_PASSWORD: ${MYSQL_PASSWORD:-sework2024}
+MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root2024}</code></pre>
+            <div class="docs-note">
+              `.env` 已加入 `.gitignore`。真实密码、数据库连接串、智谱 API Key 不应上传到 GitHub；如果仓库中历史上已经提交过真实密钥，建议立刻旋转密码和 API Key。
+            </div>
           </article>
 
-          <article id="datasets" class="docs-section">
-            <h2>4. 数据集管理</h2>
-            <p>管理员可以查看所有数据集的来源、格式、细胞数、向量维度和状态。</p>
+          <article id="knowledge" class="docs-section">
+            <h2>4. 知识库与 RAG</h2>
+            <p>当前 RAG 主链路主要服务于 <code>POST /api/ai/cell-query</code>。它不是单纯的大模型问答，而是：</p>
             <ul>
-              <li>按所属用户排查数据归属</li>
-              <li>识别失效数据路径或异常格式</li>
+              <li>先解析自然语言中的 <code>cell_type</code>、<code>disease</code>、<code>tissue</code> 等线索</li>
+              <li>再检索本地知识库中的概念、marker、说明文档</li>
+              <li>随后结合当前活动索引或候选结果召回相关细胞</li>
+              <li>最后融合知识证据与数据证据生成解释性回答</li>
+            </ul>
+            <p>推荐的知识库目录结构如下：</p>
+            <pre><code>knowledge/
+├── index/
+│   ├── knowledge.faiss
+│   └── metadata.json
+├── source/
+│   ├── README.md
+│   ├── sc_knowledge.jsonl
+│   ├── sc_concepts.jsonl
+│   ├── cell_marker_kb_filtered.jsonl
+│   ├── cell_marker_kb.jsonl
+│   └── user/
+└── examples/
+    └── demo.jsonl</code></pre>
+            <p>CPU 环境下推荐优先使用精简版知识库：</p>
+            <ul>
+              <li><code>cell_marker_kb_filtered.jsonl</code>：36,401 条，CPU 构建索引约 1.5 到 2 小时</li>
+              <li><code>cell_marker_kb.jsonl</code>：123,170 条，CPU 构建索引约 24 小时</li>
+            </ul>
+            <p>推荐命令：</p>
+            <pre><code># 推荐正式构建命令：生成持久化日志，并在存在兼容 checkpoint 时自动恢复
+python scripts/build_knowledge_index.py --batch-size 256 --log-dir logs --resume
+
+# 仅诊断：先确认文档数量、模型加载、设备和文本长度统计
+python scripts/build_knowledge_index.py --diagnose-only --log-dir logs
+
+# 指定 checkpoint 目录，便于多次恢复同一轮长任务
+python scripts/build_knowledge_index.py --batch-size 256 --log-dir logs --checkpoint-dir knowledge/index/.checkpoint --resume
+
+# 精简知识库生成脚本
+python scripts/filter_cell_marker_kb.py --aggressive --output knowledge/source/cell_marker_kb_filtered.jsonl</code></pre>
+            <div class="docs-note">
+              从当前版本开始，<code>build_knowledge_index.py</code> 会将日志持久化到 <code>logs/knowledge-index-*.log</code>，并在 <code>knowledge/index/.checkpoint/</code> 下保存 checkpoint。推荐优先使用带 <code>--log-dir logs --resume</code> 的命令，避免长时间构建失败后既无记录也无法恢复。
+            </div>
+            <div class="docs-note">
+              如果 `knowledge/source/` 中不存在对应文件，系统会回退读取旧的 `data/kb/`。这保证了兼容性，但对公开发布而言，推荐尽量迁移到新的 `knowledge/` 结构。
+            </div>
+          </article>
+
+          <article id="admin-ops" class="docs-section">
+            <h2>5. 后台管理操作</h2>
+            <p>管理员登录后，在历史页可看到 <strong>Admin Dashboard</strong>。总览区域重点指标包括：</p>
+            <ul>
+              <li>用户总数、启用账号、停用账号和管理员数量</li>
+              <li>数据集总数、索引总数、失败任务数和进行中任务数</li>
+              <li>索引类型分布、距离度量分布、构建趋势和用户索引 Top 10</li>
+            </ul>
+            <h3>5.1 用户管理</h3>
+            <ul>
+              <li>创建普通用户，超级管理员可进一步创建管理员</li>
+              <li>修改显示名、邮箱、启用状态和角色</li>
+              <li>重置密码，处理账号交接或遗忘密码问题</li>
+              <li>删除用户前，先确认其数据集和索引是否仍在使用</li>
+            </ul>
+            <h3>5.2 数据集管理</h3>
+            <ul>
+              <li>查看所有数据集的来源、格式、细胞数、维度和状态</li>
+              <li>排查失效路径、异常格式和归属问题</li>
               <li>删除不再使用或错误导入的数据集</li>
             </ul>
-            <div class="docs-note">
-              删除数据集前请先确认是否存在关联索引。系统会联动处理相关索引，但仍建议先完成沟通与备份。
-            </div>
-          </article>
-
-          <article id="indexes" class="docs-section">
-            <h2>5. 索引管理</h2>
+            <h3>5.3 索引管理</h3>
             <ul>
               <li>查看索引所属用户、关联数据集、索引类型、距离度量和构建参数</li>
               <li>强制激活某个索引，帮助用户恢复工作环境</li>
               <li>删除错误、失效或不再使用的索引</li>
-            </ul>
-            <p>适用场景：</p>
-            <ul>
-              <li>用户误操作导致活跃索引切换错误</li>
-              <li>容器内对应索引集合已经失效，需要清理后台元数据</li>
-              <li>课程演示时需要统一切换到指定索引</li>
             </ul>
           </article>
 
@@ -122,25 +250,17 @@
               <li>状态与阶段</li>
               <li>更新时间</li>
             </ul>
-            <p>当出现构建失败时，可结合错误信息和更新时间判断问题是否来自数据文件、容器连接或配置不一致。</p>
-          </article>
-
-          <article id="audit" class="docs-section">
-            <h2>7. 审计日志</h2>
-            <p>审计日志用于记录关键后台操作，便于答辩展示、责任追踪和问题回溯。</p>
-            <p>典型记录包括：</p>
+            <p>当出现构建失败时，可优先检查：</p>
             <ul>
-              <li>创建用户</li>
-              <li>修改角色</li>
-              <li>停用或启用账号</li>
-              <li>重置密码</li>
-              <li>删除数据集</li>
-              <li>删除或强制激活索引</li>
+              <li>MySQL、FAISS 容器是否正常启动</li>
+              <li><code>.env</code> 中的 <code>DATABASE_URL</code> 和 <code>FAISS_SERVICE_URL</code> 是否正确</li>
+              <li>数据文件是否被容器正确挂载</li>
+              <li>知识索引是否已重新构建，尤其是在修改 <code>knowledge/source/</code> 后</li>
             </ul>
           </article>
 
           <article id="bootstrap" class="docs-section">
-            <h2>8. 管理员初始化</h2>
+            <h2>7. 管理员初始化</h2>
             <p>若系统尚无管理员账号，可由部署者在项目根目录执行：</p>
             <pre><code>python scripts/bootstrap_admins.py</code></pre>
             <p>脚本默认会处理以下账号：</p>
@@ -150,18 +270,36 @@
               <li><code>admin03</code></li>
               <li><code>admin04</code></li>
             </ul>
-            <p>其中第一个账号默认会被设置为 <code>super_admin</code>。</p>
+            <p>其中第一个账号默认会被设置为 <code>super_admin</code>。脚本也支持通过环境变量自定义管理员列表、超级管理员账号和密码。</p>
           </article>
 
-          <article id="rules" class="docs-section">
-            <h2>9. 操作建议</h2>
+          <article id="audit" class="docs-section">
+            <h2>8. 审计与运维建议</h2>
+            <p>审计日志用于记录关键后台操作，便于答辩展示、责任追踪和问题回溯。典型记录包括：</p>
+            <ul>
+              <li>创建用户、修改角色、停用或启用账号</li>
+              <li>重置密码、删除数据集、删除或强制激活索引</li>
+            </ul>
+            <p>日常运维建议：</p>
             <ul>
               <li>先看总览，再进入用户、数据集和索引细查问题</li>
               <li>删除用户或数据集前，先确认是否仍在演示流程中使用</li>
               <li>对管理员账号的增删改操作，尽量由超级管理员执行</li>
-              <li>出现异常构建任务时，先检查 MySQL、FAISS 和数据挂载路径</li>
-              <li>如需面向普通用户答疑，请优先引导其查阅用户手册</li>
+              <li>知识库文件更新后，及时重新执行知识索引构建</li>
+              <li>如需面向普通用户答疑，请优先引导其查阅用户手册和 RAG 实现文档</li>
             </ul>
+          </article>
+
+          <article id="faq" class="docs-section">
+            <h2>9. 常见问题</h2>
+            <h3>9.1 登录时报数据库连接错误</h3>
+            <p>请先检查 `ann-mysql` 是否正常启动，`.env` 中的 `DATABASE_URL` 是否正确，以及 MySQL 映射端口是否与 `docker-compose.yml` 一致。</p>
+            <h3>9.2 AI 助手不可用</h3>
+            <p>优先检查是否配置了 <code>ZHIPU_API_KEY</code>，以及是否已执行 <code>python scripts/build_knowledge_index.py --batch-size 256 --log-dir logs --resume</code> 生成知识索引。</p>
+            <h3>9.3 知识索引构建过慢</h3>
+            <p>CPU 环境下请优先使用 <code>cell_marker_kb_filtered.jsonl</code>，并显式传入 <code>--batch-size 256 --log-dir logs --resume</code>；如仍过慢，可先执行 <code>python scripts/filter_cell_marker_kb.py --aggressive</code> 重新生成精简知识库。正式重跑前也建议先用 <code>python scripts/build_knowledge_index.py --diagnose-only --log-dir logs</code> 做一次轻量诊断。</p>
+            <h3>9.4 仓库中发现明文密码或密钥</h3>
+            <p>立即将其改为 `.env` 中的环境变量引用，旋转数据库密码和 API Key，并确认 `.env`、知识索引产物、用户数据文件均已加入 `.gitignore`。</p>
           </article>
         </section>
       </main>

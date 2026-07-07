@@ -17,6 +17,9 @@ const mainAdminManualLink = document.querySelector("#mainAdminManualLink");
 const historyCards = document.querySelector("#historyCards");
 const hubHistoryMessage = document.querySelector("#hubHistoryMessage");
 const hubDataPath = document.querySelector("#hubDataPath");
+const hubDatasetFile = document.querySelector("#hubDatasetFile");
+const hubDatasetFileName = document.querySelector("#hubDatasetFileName");
+const uploadDatasetBtn = document.querySelector("#uploadDatasetBtn");
 const openNewDatasetBtn = document.querySelector("#openNewDatasetBtn");
 const hubNewDatasetMessage = document.querySelector("#hubNewDatasetMessage");
 const adminPanelSection = document.querySelector("#adminPanelSection");
@@ -63,6 +66,9 @@ const adminUserDetailChartElement = document.querySelector("#adminUserDetailChar
 const backToHubBtn = document.querySelector("#backToHubBtn");
 const currentDatasetLabel = document.querySelector("#currentDatasetLabel");
 const dataPathInput = document.querySelector("#dataPath");
+const datasetFileInput = document.querySelector("#datasetFile");
+const datasetFileName = document.querySelector("#datasetFileName");
+const uploadDataBtn = document.querySelector("#uploadDataBtn");
 const indexTypeInput = document.querySelector("#indexType");
 const distanceMetricInput = document.querySelector("#distanceMetric");
 const hnswMField = document.querySelector("#hnswMField");
@@ -101,11 +107,21 @@ const contextHelpOverlayClose = document.querySelector("#contextHelpOverlayClose
 const aiAssistantDock = document.querySelector("#aiAssistantDock");
 const aiAssistantLauncher = document.querySelector("#aiAssistantLauncher");
 const aiAssistantPanel = document.querySelector("#aiAssistantPanel");
+const aiAssistantDragHandle = document.querySelector("#aiAssistantDragHandle");
+const aiAssistantHeroEyebrow = document.querySelector("#aiAssistantHeroEyebrow");
+const aiAssistantHeroTitle = document.querySelector("#aiAssistantHeroTitle");
+const aiAssistantHeroDescription = document.querySelector("#aiAssistantHeroDescription");
+const aiAssistantModeCards = document.querySelector("#aiAssistantModeCards");
+const aiAssistantSuggestionsList = document.querySelector("#aiAssistantSuggestionsList");
+const aiAssistantRefreshSuggestions = document.querySelector("#aiAssistantRefreshSuggestions");
+const aiAssistantMoveToggle = document.querySelector("#aiAssistantMoveToggle");
+const aiAssistantFullscreenToggle = document.querySelector("#aiAssistantFullscreenToggle");
 const aiAssistantClose = document.querySelector("#aiAssistantClose");
-const aiAssistantSuggestedQuestionBtn = document.querySelector("#aiAssistantSuggestedQuestionBtn");
 const aiAssistantInput = document.querySelector("#aiAssistantInput");
+const aiAssistantRegenerateBtn = document.querySelector("#aiAssistantRegenerateBtn");
 const aiAssistantSendBtn = document.querySelector("#aiAssistantSendBtn");
 const aiAssistantStatus = document.querySelector("#aiAssistantStatus");
+const aiAssistantConversationToggle = document.querySelector("#aiAssistantConversationToggle");
 const aiAssistantMessages = document.querySelector("#aiAssistantMessages");
 
 const filterCellType = document.querySelector("#filterCellType");
@@ -118,6 +134,7 @@ const filterDonorId = document.querySelector("#filterDonorId");
 const cellIdInput = document.querySelector("#cellId");
 const topKIdInput = document.querySelector("#topKId");
 const queryVectorInput = document.querySelector("#queryVector");
+const queryVectorCsvInput = document.querySelector("#queryVectorCsv");
 const topKVectorInput = document.querySelector("#topKVector");
 const searchByIdBtn = document.querySelector("#searchByIdBtn");
 const searchByVectorBtn = document.querySelector("#searchByVectorBtn");
@@ -177,8 +194,99 @@ const RESULTS_PAGE_SIZE = 10;
 const BUILD_JOB_POLL_MS = 1200;
 const BUILD_JOB_STORAGE_KEY = "sework.activeBuildJob";
 const DEFAULT_UMAP_LEVEL = "preview";
-const AI_ASSISTANT_SUGGESTED_QUESTION =
-  "请结合当前数据集，分别说明 HNSW、IVF、PQ 的优势、劣势、适用场景，并给出各自推荐的参数设置。";
+const AI_ASSISTANT_POSITION_STORAGE_KEY = "sework.aiAssistantPosition";
+const AI_ASSISTANT_VISIBLE_SUGGESTION_COUNT = 4;
+const AI_ASSISTANT_MODE_ORDER = ["cell_query", "result_explanation", "knowledge_qa", "index_advice"];
+const AI_ASSISTANT_MODE_CONFIG = {
+  cell_query: {
+    label: "细胞自然语言分析",
+    shortLabel: "查细胞",
+    heroEyebrow: "Hi~",
+    heroTitle: "我是单细胞检索助手",
+    heroDescription: "告诉我你想找哪类细胞、组织或疾病相关群体，我会联动当前数据集、结构化结果和知识证据一起回答。",
+    placeholder: "请输入自然语言问题，例如：肝脏数据中和 fibrosis 相关的细胞类型有哪些？",
+    intro:
+      "你好，我可以结合当前数据集、知识库和检索结果回答细胞类型、marker gene、疾病关联、结果解释和下一步分析建议。",
+    idleStatus: "可切换模式后提问，系统会联动知识库、细胞结果和 UMAP 展示。",
+    endpoint: "/api/ai/cell-query",
+    suggestions: [
+      "查找与肝纤维化相关的免疫细胞，并解释为什么这些细胞值得关注。",
+      "这个数据集里最像 T 细胞的是哪类细胞？",
+      "帮我找出 liver 数据中可能与炎症相关的细胞群。",
+      "哪些细胞和 macrophage 更接近，并给出原因？",
+      "请结合当前结果，筛选值得优先关注的 fibrosis 相关细胞。",
+      "如果我要观察 hepatocyte 附近的相关细胞，应该关注哪些候选？",
+      "在当前数据集中，哪些 cell_type 最值得作为后续分析起点？",
+      "请用自然语言总结当前数据集中最值得关注的细胞群。",
+    ],
+  },
+  result_explanation: {
+    label: "结果解释",
+    shortLabel: "解释结果",
+    heroEyebrow: "Explain",
+    heroTitle: "我来解释为什么召回这些细胞",
+    heroDescription: "当你已经做过 ID 或向量检索后，我可以结合 metadata、知识库和当前结果，解释这些细胞为什么会被召回。",
+    placeholder: "例如：为什么这些细胞被召回？哪些证据支持它们可能是巨噬细胞？",
+    intro:
+      "你好，我可以解释当前检索结果的生物学意义，结合 metadata、知识库证据和 UMAP 联动说明为什么这些细胞值得关注。",
+    idleStatus: "适合在完成一次检索后使用，帮助你解释结果来源、细胞类型和潜在意义。",
+    endpoint: "/api/ai/cell-query",
+    suggestions: [
+      "为什么这些细胞被召回？请结合 metadata 和知识库说明。",
+      "这些结果为什么可能是 macrophage，而不是 monocyte？",
+      "请解释当前高亮细胞在 UMAP 上聚集意味着什么。",
+      "这些细胞和 fibrosis 的关系是什么？",
+      "哪些证据支持当前候选细胞与 stellate cell 更接近？",
+      "为什么当前结果里会同时出现 immune cell 和 fibroblast？",
+      "请解释当前 Top-K 结果的共同特征。",
+      "从检索结果看，当前查询最可能对应哪类细胞？",
+    ],
+  },
+  knowledge_qa: {
+    label: "知识库问答",
+    shortLabel: "知识问答",
+    heroEyebrow: "Knowledge",
+    heroTitle: "我可以回答 marker 和 cell type 问题",
+    heroDescription: "你可以直接问某个 cell_type 的 marker gene、组织背景、生物学含义和常见分析注意点。",
+    placeholder: "例如：这个 cell_type 的常见 marker gene 是什么？",
+    intro:
+      "你好，我可以结合知识库回答 cell_type、marker gene、组织和疾病关联等问题，并提醒你如何与当前数据集联合验证。",
+    idleStatus: "适合查询 marker gene、细胞类型定义、组织来源和生物学意义。",
+    endpoint: "/api/ai/cell-query",
+    suggestions: [
+      "这个 cell_type 的常见 marker gene 是什么？",
+      "stellate cell 和 fibroblast 在 liver 中有什么区别？",
+      "为什么 fibrosis 分析里要重点关注 macrophage、stellate cell 和 fibroblast？",
+      "UMAP 上彼此靠近就一定是同类细胞吗？",
+      "T cell 的常见 marker gene 是什么，应该如何验证？",
+      "hepatocyte 在 liver 数据中通常有什么特征？",
+      "如果我想判断某类细胞是不是 NK cell，应该看哪些 marker？",
+      "知识库里与 liver 分析最相关的细胞类型有哪些？",
+    ],
+  },
+  index_advice: {
+    label: "索引建议",
+    shortLabel: "索引建议",
+    heroEyebrow: "Index",
+    heroTitle: "我可以帮你选索引和参数",
+    heroDescription: "如果你在 HNSW、IVF、PQ 之间犹豫，或者不知道 nlist、nprobe、M、efConstruction 怎么设，可以直接问我。",
+    placeholder: "请输入索引或参数问题，例如：当前数据集更适合 HNSW 还是 IVF？",
+    intro:
+      "你好，我可以结合当前数据集回答 HNSW、IVF、PQ 的差异，帮助你选择距离度量和构建参数。",
+    idleStatus: "可点击上方推荐问题，或直接咨询索引类型、参数设置和性能取舍。",
+    endpoint: "/api/ai/chat",
+    suggestions: [
+      "请结合当前数据集，分别说明 HNSW、IVF、PQ 的优势、劣势、适用场景，并给出各自推荐的参数设置。",
+      "当前数据集更适合 HNSW 还是 IVF？为什么？",
+      "如果我更关注召回率，HNSW 参数应该怎么调？",
+      "IVF 的 nlist 和 nprobe 应该如何权衡速度与准确率？",
+      "在资源受限场景下，PQ 什么时候值得用？",
+      "当前数据集的向量维度和规模下，推荐哪种索引结构？",
+      "如果我要做交互式查询，HNSW 和 IVF 哪个更稳？",
+      "如何向老师解释不同索引策略的取舍逻辑？",
+    ],
+  },
+};
 
 const QUALITY_METRICS = {
   gene: { label: "基因数", histogramKey: "gene_count_histogram", pointField: "gene_count" },
@@ -204,6 +312,9 @@ const state = {
   currentDatasetInfo: null,
   metadataOptions: {},
   umapChart: null,
+  umapChartDpr: 0,
+  umapResizeObserver: null,
+  chartResizeBound: false,
   charts: {},
   umapPoints: [],
   umapFilteredPoints: [],
@@ -232,7 +343,19 @@ const state = {
   buildElapsedStatus: "",
   aiAssistantOpen: false,
   aiAssistantBusy: false,
+  aiAssistantMode: "cell_query",
   aiAssistantMessages: [],
+  aiAssistantLastQuestion: "",
+  aiAssistantSuggestionOffsets: {},
+  aiAssistantPosition: loadAiAssistantPosition(),
+  aiAssistantMoveEnabled: false,
+  aiAssistantFullscreen: false,
+  aiAssistantConversationExpanded: false,
+  aiAssistantDrag: {
+    active: false,
+    offsetX: 0,
+    offsetY: 0,
+  },
   contextHelpOpen: false,
   adminOverview: null,
   adminUsers: [],
@@ -254,6 +377,73 @@ const BUILD_STAGE_LABELS = {
   failed: "构建失败",
 };
 
+function getCurrentDevicePixelRatio() {
+  const dpr = Number(window.devicePixelRatio) || 1;
+  return dpr > 0 ? dpr : 1;
+}
+
+function buildChartInitOptions() {
+  return {
+    renderer: "canvas",
+    devicePixelRatio: getCurrentDevicePixelRatio(),
+    useDirtyRect: false,
+  };
+}
+
+function getElementClientSize(element) {
+  if (!element) return { width: 0, height: 0 };
+  const rect = element.getBoundingClientRect();
+  const width = Math.round(element.clientWidth || rect.width || 0);
+  const height = Math.round(element.clientHeight || rect.height || 0);
+  return { width, height };
+}
+
+function resizeChartToElement(chart, element) {
+  if (!chart || !element) return;
+  const { width, height } = getElementClientSize(element);
+  if (width > 0 && height > 0) {
+    chart.resize({ width, height, silent: true });
+    return;
+  }
+  chart.resize();
+}
+
+function canvasMatchesDevicePixelRatio(container, dpr = getCurrentDevicePixelRatio()) {
+  if (!container) return true;
+  const canvases = Array.from(container.querySelectorAll("canvas"));
+  if (!canvases.length) return true;
+  return canvases.every((canvas) => {
+    const rect = canvas.getBoundingClientRect();
+    const cssWidth = Math.round(canvas.clientWidth || rect.width || 0);
+    const cssHeight = Math.round(canvas.clientHeight || rect.height || 0);
+    if (cssWidth <= 0 || cssHeight <= 0) return true;
+    const expectedWidth = Math.round(cssWidth * dpr);
+    const expectedHeight = Math.round(cssHeight * dpr);
+    const widthDelta = Math.abs((canvas.width || 0) - expectedWidth);
+    const heightDelta = Math.abs((canvas.height || 0) - expectedHeight);
+    return widthDelta <= 2 && heightDelta <= 2;
+  });
+}
+
+function captureUmapViewportState() {
+  if (!state.umapChart?.getOption) return null;
+  const option = state.umapChart.getOption();
+  const dataZoom = Array.isArray(option?.dataZoom)
+    ? option.dataZoom.map((zoom) => ({
+        start: zoom.start,
+        end: zoom.end,
+        startValue: zoom.startValue,
+        endValue: zoom.endValue,
+      }))
+    : [];
+  return dataZoom.length ? { dataZoom } : null;
+}
+
+function restoreUmapViewportState(chart, snapshot) {
+  if (!chart || !snapshot?.dataZoom?.length) return;
+  chart.setOption({ dataZoom: snapshot.dataZoom }, false);
+}
+
 function parseJson(raw) {
   if (!raw) return null;
   try {
@@ -261,6 +451,15 @@ function parseJson(raw) {
   } catch {
     return null;
   }
+}
+
+function loadAiAssistantPosition() {
+  const stored = parseJson(localStorage.getItem(AI_ASSISTANT_POSITION_STORAGE_KEY));
+  if (!stored || typeof stored !== "object") return null;
+  const left = Number(stored.left);
+  const top = Number(stored.top);
+  if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
+  return { left, top };
 }
 
 function sleep(ms) {
@@ -356,6 +555,34 @@ function humanizeDistanceMetric(value, effectiveMetric = "") {
     return `${label} (${effectiveLabels[normalizedEffective] || normalizedEffective})`;
   }
   return label;
+}
+
+function formatCompactTimeMs(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  if (num >= 100) return `${Math.round(num)} ms`;
+  if (num >= 10) return `${num.toFixed(1)} ms`;
+  return `${num.toFixed(2)} ms`;
+}
+
+function deriveDatasetTitle(item) {
+  const pathSource = trimText(item?.data_path);
+  const indexSource = trimText(item?.index_name);
+  const rawName = (pathSource.split(/[\\/]/).pop() || indexSource || "dataset").replace(/\.(csv|h5ad)$/i, "");
+  const primaryToken = trimText(rawName.split(/[_\-\s]+/)[0]) || trimText(indexSource.split(/[_\-\s]+/)[0]) || "dataset";
+  const normalized = primaryToken
+    ? `${primaryToken.charAt(0).toUpperCase()}${primaryToken.slice(1).toLowerCase()}`
+    : "Dataset";
+  return `${normalized} Dataset`;
+}
+
+function deriveDatasetSubtitle(item) {
+  const indexName = trimText(item?.index_name);
+  if (indexName) return indexName;
+  const pathSource = trimText(item?.data_path);
+  const baseName = pathSource.split(/[\\/]/).pop() || "";
+  return baseName.replace(/\.(csv|h5ad)$/i, "") || "--";
 }
 
 function historyIndexParamEntries(item = {}) {
@@ -603,23 +830,23 @@ function combinedLocalFilters() {
 
 function paletteColor(value) {
   const seed = trimText(value);
-  if (!seed) return "rgba(125,211,252,0.7)";
+  if (!seed) return "#7dd3fc";
   let hash = 0;
   for (let index = 0; index < seed.length; index += 1) {
     hash = (hash * 31 + seed.charCodeAt(index)) % 360;
   }
-  return `hsla(${hash}, 82%, 66%, 0.82)`;
+  return `hsl(${hash}, 82%, 66%)`;
 }
 
 function buildBaseItemStyle(point) {
   const mode = state.umapColorMode || "default";
   if (mode === "cell_type") {
-    return { color: paletteColor(metadataValue(point, "cell_type")), opacity: 0.36 };
+    return { color: paletteColor(metadataValue(point, "cell_type")), opacity: 0.78 };
   }
   if (mode === "disease") {
-    return { color: paletteColor(metadataValue(point, "disease")), opacity: 0.42 };
+    return { color: paletteColor(metadataValue(point, "disease")), opacity: 0.76 };
   }
-  return { color: "rgba(125,211,252,0.42)", opacity: 0.42 };
+  return { color: "#7dd3fc", opacity: 0.82 };
 }
 
 function clearMessageAutoHide(element) {
@@ -640,12 +867,12 @@ function setMessage(element, message, tone = "neutral", classSuffix = "", autoHi
         ? "status-message error-message"
         : "status-message neutral-message";
   element.className = `${className}${classSuffix ? ` ${classSuffix}` : ""}`;
-  element.textContent = message;
+  element.innerHTML = `<span class="status-message-content">${escapeHtml(message)}</span>`;
   element.classList.remove("d-none");
   element.hidden = false;
   if (autoHideMs > 0) {
     const timer = window.setTimeout(() => {
-      element.textContent = "";
+      element.innerHTML = "";
       element.classList.add("d-none");
       element.hidden = true;
       messageAutoHideTimers.delete(element);
@@ -705,6 +932,214 @@ function setAiAssistantPanelOpen(open) {
   state.aiAssistantOpen = Boolean(open);
   aiAssistantPanel.classList.toggle("d-none", !state.aiAssistantOpen);
   aiAssistantPanel.hidden = !state.aiAssistantOpen;
+  syncAiAssistantMoveUI();
+  if (state.aiAssistantOpen) {
+    window.requestAnimationFrame(() => {
+      ensureAiAssistantPanelPosition();
+      syncAiAssistantComposerState();
+    });
+  }
+}
+
+function syncAiAssistantMoveUI() {
+  if (aiAssistantPanel) {
+    aiAssistantPanel.classList.toggle("is-move-enabled", Boolean(state.aiAssistantMoveEnabled));
+    aiAssistantPanel.classList.toggle("is-fullscreen", Boolean(state.aiAssistantFullscreen));
+    aiAssistantPanel.classList.toggle("is-conversation-expanded", Boolean(state.aiAssistantConversationExpanded));
+  }
+  if (aiAssistantMoveToggle) {
+    aiAssistantMoveToggle.classList.toggle("is-active", Boolean(state.aiAssistantMoveEnabled));
+    aiAssistantMoveToggle.setAttribute(
+      "aria-label",
+      state.aiAssistantMoveEnabled ? "关闭移动模式" : "开启移动模式"
+    );
+    aiAssistantMoveToggle.title = state.aiAssistantMoveEnabled ? "移动模式已开启，拖动顶部即可挪动" : "点击开启移动模式";
+  }
+  if (aiAssistantFullscreenToggle) {
+    aiAssistantFullscreenToggle.classList.toggle("is-active", Boolean(state.aiAssistantFullscreen));
+    aiAssistantFullscreenToggle.setAttribute(
+      "aria-label",
+      state.aiAssistantFullscreen ? "恢复默认大小" : "切换全屏"
+    );
+    aiAssistantFullscreenToggle.title = state.aiAssistantFullscreen ? "点击恢复默认大小" : "点击全屏显示";
+    aiAssistantFullscreenToggle.textContent = state.aiAssistantFullscreen ? "❐" : "⛶";
+  }
+  if (aiAssistantConversationToggle) {
+    aiAssistantConversationToggle.textContent = state.aiAssistantConversationExpanded ? "收起对话区" : "展开对话区";
+    aiAssistantConversationToggle.setAttribute(
+      "aria-label",
+      state.aiAssistantConversationExpanded ? "收起对话区" : "展开对话区"
+    );
+    aiAssistantConversationToggle.title = state.aiAssistantConversationExpanded
+      ? "恢复完整助手布局"
+      : "让对话区占用更多空间";
+  }
+}
+
+function currentAiAssistantMode() {
+  const value = trimText(state.aiAssistantMode || "cell_query");
+  return AI_ASSISTANT_MODE_CONFIG[value] ? value : "cell_query";
+}
+
+function currentAiAssistantConfig() {
+  return AI_ASSISTANT_MODE_CONFIG[currentAiAssistantMode()] || AI_ASSISTANT_MODE_CONFIG.cell_query;
+}
+
+function saveAiAssistantPosition(position) {
+  if (!position) return;
+  localStorage.setItem(AI_ASSISTANT_POSITION_STORAGE_KEY, JSON.stringify(position));
+}
+
+function clampAiAssistantPosition(left = 0, top = 0) {
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const padding = viewportWidth <= 768 ? 8 : 16;
+  const width = aiAssistantPanel?.offsetWidth || 560;
+  const height = aiAssistantPanel?.offsetHeight || 760;
+  const maxLeft = Math.max(padding, viewportWidth - width - padding);
+  const maxTop = Math.max(padding, viewportHeight - height - padding);
+  return {
+    left: Math.min(Math.max(left, padding), maxLeft),
+    top: Math.min(Math.max(top, padding), maxTop),
+  };
+}
+
+function getDefaultAiAssistantPosition() {
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+  const width = aiAssistantPanel?.offsetWidth || 560;
+  const height = aiAssistantPanel?.offsetHeight || 760;
+  return clampAiAssistantPosition(viewportWidth - width - 16, viewportHeight - height - 16);
+}
+
+function applyAiAssistantPanelPosition(position, { persist = true } = {}) {
+  if (!aiAssistantPanel) return;
+  const next = clampAiAssistantPosition(position?.left || 0, position?.top || 0);
+  aiAssistantPanel.style.left = `${next.left}px`;
+  aiAssistantPanel.style.top = `${next.top}px`;
+  state.aiAssistantPosition = next;
+  if (persist) {
+    saveAiAssistantPosition(next);
+  }
+}
+
+function ensureAiAssistantPanelPosition({ forceDefault = false } = {}) {
+  if (state.aiAssistantFullscreen) {
+    applyAiAssistantPanelPosition({ left: 12, top: 12 }, { persist: false });
+    return;
+  }
+  const next = forceDefault || !state.aiAssistantPosition ? getDefaultAiAssistantPosition() : state.aiAssistantPosition;
+  applyAiAssistantPanelPosition(next, { persist: true });
+}
+
+function getAiSuggestionOffset(mode) {
+  return Number(state.aiAssistantSuggestionOffsets?.[mode] || 0);
+}
+
+function rotateAiAssistantSuggestions() {
+  const mode = currentAiAssistantMode();
+  const config = currentAiAssistantConfig();
+  const total = Array.isArray(config.suggestions) ? config.suggestions.length : 0;
+  if (!total) return;
+  const nextOffset = (getAiSuggestionOffset(mode) + AI_ASSISTANT_VISIBLE_SUGGESTION_COUNT) % total;
+  state.aiAssistantSuggestionOffsets[mode] = nextOffset;
+  renderAiAssistantSuggestions();
+}
+
+function currentAiAssistantSuggestions() {
+  const config = currentAiAssistantConfig();
+  const suggestions = Array.isArray(config.suggestions) ? config.suggestions : [];
+  if (suggestions.length <= AI_ASSISTANT_VISIBLE_SUGGESTION_COUNT) {
+    return suggestions;
+  }
+  const offset = getAiSuggestionOffset(currentAiAssistantMode());
+  return Array.from({ length: AI_ASSISTANT_VISIBLE_SUGGESTION_COUNT }, (_, index) => {
+    return suggestions[(offset + index) % suggestions.length];
+  });
+}
+
+function renderAiAssistantModeCards() {
+  if (!aiAssistantModeCards) return;
+  const activeMode = currentAiAssistantMode();
+  aiAssistantModeCards.innerHTML = AI_ASSISTANT_MODE_ORDER.map((modeKey) => {
+    const config = AI_ASSISTANT_MODE_CONFIG[modeKey];
+    if (!config) return "";
+    return `
+      <button
+        type="button"
+        class="ai-assistant-mode-card ${modeKey === activeMode ? "is-active" : ""}"
+        data-ai-mode="${escapeHtml(modeKey)}"
+      >
+        <span class="ai-assistant-mode-card-title">${escapeHtml(config.label)}</span>
+        <span class="ai-assistant-mode-card-desc">${escapeHtml(config.heroDescription || config.intro || "")}</span>
+      </button>
+    `;
+  }).join("");
+}
+
+function renderAiAssistantSuggestions() {
+  if (!aiAssistantSuggestionsList) return;
+  const suggestions = currentAiAssistantSuggestions();
+  aiAssistantSuggestionsList.innerHTML = suggestions
+    .map(
+      (item) => `
+        <button
+          type="button"
+          class="ai-assistant-suggestion-btn"
+          data-ai-suggested-question="${escapeHtml(String(item || ""))}"
+        >
+          <span>${escapeHtml(String(item || ""))}</span>
+        </button>
+      `
+    )
+    .join("");
+}
+
+function syncAiAssistantComposerState() {
+  const hasInput = Boolean(trimText(aiAssistantInput?.value || ""));
+  if (aiAssistantSendBtn) {
+    aiAssistantSendBtn.disabled = state.aiAssistantBusy || !hasInput;
+  }
+  if (aiAssistantRegenerateBtn) {
+    aiAssistantRegenerateBtn.disabled = state.aiAssistantBusy || !trimText(state.aiAssistantLastQuestion);
+  }
+  if (aiAssistantRefreshSuggestions) {
+    aiAssistantRefreshSuggestions.disabled = state.aiAssistantBusy;
+  }
+}
+
+function fillAiAssistantInput(question = "") {
+  if (!aiAssistantInput) return;
+  aiAssistantInput.value = String(question || "");
+  aiAssistantInput.focus();
+  syncAiAssistantComposerState();
+}
+
+async function copyAiAssistantText(text = "") {
+  const normalized = String(text || "");
+  if (!normalized) return;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(normalized);
+    return;
+  }
+  const temp = document.createElement("textarea");
+  temp.value = normalized;
+  temp.setAttribute("readonly", "readonly");
+  temp.style.position = "fixed";
+  temp.style.opacity = "0";
+  document.body.appendChild(temp);
+  temp.select();
+  document.execCommand("copy");
+  document.body.removeChild(temp);
+}
+
+function humanizeAiRetrievalSource(value) {
+  const normalized = trimText(value).toLowerCase();
+  if (normalized === "existing_query_results") return "当前检索结果";
+  if (normalized === "active_index") return "激活索引";
+  if (normalized === "dataset_preview") return "数据集预览";
+  if (normalized === "none") return "仅知识库";
+  return value || "混合检索";
 }
 
 function aiAssistantDatasetSummaryLine(datasetSummary = null) {
@@ -790,19 +1225,21 @@ function renderAiAssistantMarkdown(text = "") {
 function renderAiAssistantMessages() {
   if (!aiAssistantMessages) return;
   if (!state.aiAssistantMessages.length) {
+    const config = currentAiAssistantConfig();
     aiAssistantMessages.innerHTML = `
       <div class="ai-assistant-placeholder">
-        这里会显示你和 AI 的对话内容。默认推荐问题会围绕 HNSW / IVF / PQ 的优劣和参数建议展开。
+        这里会显示你和 AI 的对话内容。当前模式：${escapeHtml(config.label)}。
       </div>
     `;
     return;
   }
 
   aiAssistantMessages.innerHTML = state.aiAssistantMessages
-    .map((message) => {
+    .map((message, index) => {
       const roleClass = message.role === "user" ? "is-user" : "is-assistant";
       const roleLabel = message.role === "user" ? "你" : "AI";
       const meta = trimText(message.meta || "");
+      const linkedQuestion = trimText(message.linkedQuestion || findAiAssistantLinkedQuestion(index));
       return `
         <article class="ai-assistant-message ${roleClass}">
           <div class="ai-assistant-message-role">${escapeHtml(roleLabel)}</div>
@@ -813,6 +1250,20 @@ function renderAiAssistantMessages() {
                 ? renderAiAssistantMarkdown(message.content || "")
                 : escapeHtml(message.content || "").replace(/\n/g, "<br>")
             }</div>
+            ${message.role === "assistant" ? renderAiAssistantArtifacts(message.artifacts || null) : ""}
+            <div class="ai-assistant-message-actions">
+              <button type="button" class="ai-assistant-message-action" data-ai-copy-message-index="${index}">复制</button>
+              ${
+                message.role === "user"
+                  ? `
+                    <button type="button" class="ai-assistant-message-action" data-ai-edit-message-index="${index}">编辑</button>
+                    <button type="button" class="ai-assistant-message-action" data-ai-resend-message-index="${index}">重新提问</button>
+                  `
+                  : linkedQuestion
+                    ? `<button type="button" class="ai-assistant-message-action" data-ai-regenerate-message-index="${index}">重新生成</button>`
+                    : ""
+              }
+            </div>
           </div>
         </article>
       `;
@@ -821,25 +1272,176 @@ function renderAiAssistantMessages() {
   scrollAiAssistantMessagesToBottom();
 }
 
+function findAiAssistantLinkedQuestion(messageIndex) {
+  for (let index = Number(messageIndex); index >= 0; index -= 1) {
+    const item = state.aiAssistantMessages[index];
+    if (item?.role === "user" && trimText(item.content)) {
+      return trimText(item.content);
+    }
+  }
+  return "";
+}
+
+function renderAiAssistantArtifacts(artifacts = null) {
+  if (!artifacts || typeof artifacts !== "object") return "";
+
+  const sections = [];
+  const chips = [];
+  if (artifacts.modeLabel) chips.push(`<span class="ai-artifact-chip">${escapeHtml(artifacts.modeLabel)}</span>`);
+  if (artifacts.retrievalSource) {
+    chips.push(
+      `<span class="ai-artifact-chip">${escapeHtml(humanizeAiRetrievalSource(artifacts.retrievalSource))}</span>`
+    );
+  }
+  if (artifacts.model && artifacts.model !== "rule-based-fallback") {
+    chips.push(`<span class="ai-artifact-chip">${escapeHtml(artifacts.model)}</span>`);
+  }
+  if (chips.length) {
+    sections.push(`<div class="ai-assistant-artifact-chips">${chips.join("")}</div>`);
+  }
+
+  const filters = Object.entries(artifacts.appliedFilters || {});
+  if (filters.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">解析出的筛选条件</div>
+        <div class="ai-assistant-artifact-tags">
+          ${filters
+            .map(
+              ([key, value]) => `
+                <button
+                  type="button"
+                  class="ai-artifact-tag-btn"
+                  data-ai-filter-key="${escapeHtml(key)}"
+                  data-ai-filter-value="${escapeHtml(String(value ?? ""))}"
+                >${escapeHtml(`${key}: ${value}`)}</button>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `);
+  }
+
+  const cellSummary = artifacts.cellSummary || {};
+  const topCellTypes = Array.isArray(cellSummary.top_cell_types) ? cellSummary.top_cell_types : [];
+  if (topCellTypes.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">命中细胞摘要</div>
+        <p class="ai-assistant-artifact-text">共命中 ${escapeHtml(String(cellSummary.hit_count || 0))} 个候选细胞。</p>
+        <div class="ai-assistant-artifact-tags">
+          ${topCellTypes
+            .map(
+              (item) => `
+                <button
+                  type="button"
+                  class="ai-artifact-tag-btn"
+                  data-ai-filter-key="cell_type"
+                  data-ai-filter-value="${escapeHtml(String(item.name ?? ""))}"
+                >${escapeHtml(`${item.name} (${item.count})`)}</button>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `);
+  }
+
+  const cellHits = Array.isArray(artifacts.cellHits) ? artifacts.cellHits.slice(0, 4) : [];
+  if (cellHits.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">候选细胞证据</div>
+        <div class="ai-assistant-artifact-list">
+          ${cellHits
+            .map((item) => {
+              const metadata = item.metadata || {};
+              const subtitle = [
+                metadata.cell_type || "未标注类型",
+                metadata.disease || null,
+                metadata.tissue || null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              const reasonText = Array.isArray(item.reason_signals) ? item.reason_signals.slice(0, 2).join(" ") : "";
+              return `
+                <button
+                  type="button"
+                  class="ai-artifact-result-btn"
+                  data-ai-focus-cell-id="${escapeHtml(String(item.cell_id ?? ""))}"
+                >
+                  <strong>${escapeHtml(String(item.cell_id ?? ""))}</strong>
+                  <span>${escapeHtml(subtitle || "点击联动到结果表与 UMAP")}</span>
+                  ${reasonText ? `<em>${escapeHtml(reasonText)}</em>` : ""}
+                </button>
+              `;
+            })
+            .join("")}
+        </div>
+      </section>
+    `);
+  }
+
+  const knowledgeHits = Array.isArray(artifacts.knowledgeHits) ? artifacts.knowledgeHits.slice(0, 3) : [];
+  if (knowledgeHits.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">知识库证据</div>
+        <ul class="ai-assistant-artifact-ul">
+          ${knowledgeHits
+            .map(
+              (item) => `
+                <li>
+                  <strong>${escapeHtml(String(item.title ?? ""))}</strong>
+                  <span>${escapeHtml(trimText(item.content || "").slice(0, 110))}</span>
+                </li>
+              `
+            )
+            .join("")}
+        </ul>
+      </section>
+    `);
+  }
+
+  const nextSteps = Array.isArray(artifacts.nextSteps) ? artifacts.nextSteps.slice(0, 4) : [];
+  if (nextSteps.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">下一步分析建议</div>
+        <ol class="ai-assistant-artifact-ol">
+          ${nextSteps.map((item) => `<li>${escapeHtml(String(item ?? ""))}</li>`).join("")}
+        </ol>
+      </section>
+    `);
+  }
+
+  return sections.length ? `<div class="ai-assistant-artifacts">${sections.join("")}</div>` : "";
+}
+
 function resetAiAssistantConversation() {
+  const config = currentAiAssistantConfig();
   state.aiAssistantMessages = [
     {
       role: "assistant",
-      content:
-        "你好，我可以结合当前数据集回答索引类型、距离度量、参数设置和构建策略相关问题。你可以先点上方推荐问题，也可以直接在底部输入任意问题。",
+      content: config.intro,
       meta: "",
       skipHistory: true,
+      artifacts: null,
+      linkedQuestion: "",
     },
   ];
   renderAiAssistantMessages();
 }
 
-function appendAiAssistantMessage(role, content, { meta = "", skipHistory = false } = {}) {
+function appendAiAssistantMessage(role, content, { meta = "", skipHistory = false, artifacts = null, linkedQuestion = "" } = {}) {
   state.aiAssistantMessages.push({
     role,
     content: String(content || ""),
     meta: String(meta || ""),
     skipHistory: Boolean(skipHistory),
+    artifacts,
+    linkedQuestion: String(linkedQuestion || ""),
   });
   renderAiAssistantMessages();
 }
@@ -868,6 +1470,115 @@ function compactDatasetInfoForAi() {
   };
 }
 
+function compactCurrentResultsForAi(limit = 12) {
+  return (Array.isArray(state.currentResults) ? state.currentResults : []).slice(0, limit).map((item) => {
+    const point = findPointByCellId(item.cell_id) || {};
+    return {
+      cell_id: item.cell_id,
+      score: item.score,
+      similarity: item.score,
+      distance: item.distance,
+      metadata: item.metadata || {},
+      viz: item.viz || {
+        x: point.x,
+        y: point.y,
+      },
+    };
+  });
+}
+
+function syncAiAssistantModeUI({ resetConversation = false } = {}) {
+  const mode = currentAiAssistantMode();
+  const config = currentAiAssistantConfig();
+  state.aiAssistantMode = mode;
+  if (!Number.isFinite(getAiSuggestionOffset(mode))) {
+    state.aiAssistantSuggestionOffsets[mode] = 0;
+  }
+  if (aiAssistantHeroEyebrow) {
+    aiAssistantHeroEyebrow.textContent = config.heroEyebrow || "Hi~";
+  }
+  if (aiAssistantHeroTitle) {
+    aiAssistantHeroTitle.textContent = config.heroTitle || config.label;
+  }
+  if (aiAssistantHeroDescription) {
+    aiAssistantHeroDescription.textContent = config.heroDescription || config.intro;
+  }
+  if (aiAssistantInput) {
+    aiAssistantInput.placeholder = config.placeholder;
+  }
+  renderAiAssistantModeCards();
+  renderAiAssistantSuggestions();
+  setMessage(aiAssistantStatus, config.idleStatus, "neutral");
+  if (resetConversation) {
+    resetAiAssistantConversation();
+  }
+  syncAiAssistantComposerState();
+}
+
+function buildAiAssistantArtifacts(response = {}) {
+  return {
+    modeLabel: currentAiAssistantConfig().label,
+    model: response.model || "",
+    retrievalSource: response.retrieval_source || "",
+    appliedFilters: response.applied_filters || {},
+    cellSummary: response.cell_summary || {},
+    cellHits: response.cell_hits || [],
+    knowledgeHits: response.knowledge_hits || [],
+    nextSteps: response.next_steps || [],
+  };
+}
+
+function applyAiAssistantFilters(filters = {}) {
+  let changed = false;
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    const targetField = METADATA_FILTER_FIELDS.find((field) => field.key === key);
+    const selectElement = targetField?.element;
+    if (!selectElement || value === undefined || value === null || value === "") return;
+    const targetValue = String(value);
+    const optionExists = Array.from(selectElement.options || []).some((option) => option.value === targetValue);
+    if (!optionExists) return;
+    if (selectElement.value !== targetValue) {
+      selectElement.value = targetValue;
+      changed = true;
+    }
+  });
+  if (changed) {
+    refreshUmapByControls();
+  }
+  return changed;
+}
+
+async function syncAiCellAnalysisResponse(response = {}) {
+  const aiResults = Array.isArray(response.cell_hits) ? response.cell_hits : [];
+  if (!aiResults.length) return;
+  const normalizedResults = aiResults.map((item) => ({
+    cell_id: item.cell_id,
+    distance: item.distance,
+    score: item.score,
+    metadata: item.metadata || {},
+    viz: item.umap || {},
+    reason_signals: item.reason_signals || [],
+    selected: Boolean(item.selected),
+  }));
+  await renderResults(normalizedResults);
+  applyAiAssistantFilters(response.applied_filters || {});
+  const highlightCount = applyUmapHighlights(normalizedResults, "AI query", response.query_context?.selected_cell_id || "");
+  const focusCellId =
+    normalizedResults.find((item) => item.selected)?.cell_id ||
+    response.query_context?.selected_cell_id ||
+    normalizedResults[0]?.cell_id ||
+    "";
+  if (focusCellId) {
+    selectCell(focusCellId, { syncRow: true });
+  }
+  setQueryMetrics({
+    mode: "AI 自然语言分析",
+    resultCount: normalizedResults.length,
+    queryTime: null,
+    highlightCount,
+  });
+}
+
 async function sendAiAssistantQuestion(questionText = "") {
   const dataPath = trimText(state.currentDataPath || dataPathInput?.value);
   if (!dataPath) {
@@ -877,44 +1588,63 @@ async function sendAiAssistantQuestion(questionText = "") {
   if (!question) {
     throw new Error("请输入问题");
   }
+  const mode = currentAiAssistantMode();
+  const endpoint = currentAiAssistantConfig().endpoint || "/api/ai/cell-query";
+  const selectedCellId =
+    trimText(state.umapFocusedCellId) ||
+    trimText(state.umapQueryCenter?.cell_id) ||
+    trimText(cellIdInput?.value);
   const conversationHistory = serializeAiAssistantConversationHistory();
 
   setAiAssistantPanelOpen(true);
   appendAiAssistantMessage("user", question);
+  state.aiAssistantLastQuestion = question;
   state.aiAssistantBusy = true;
-  if (aiAssistantSuggestedQuestionBtn) aiAssistantSuggestedQuestionBtn.disabled = true;
-  if (aiAssistantSendBtn) aiAssistantSendBtn.disabled = true;
   setMessage(aiAssistantStatus, "AI 正在思考并组织回答...", "neutral");
+  syncAiAssistantComposerState();
 
   try {
-    const response = await requestJson("/api/ai/chat", {
+    const response = await requestJson(endpoint, {
       method: "POST",
       body: JSON.stringify({
         data_path: dataPath,
         dataset_info: compactDatasetInfoForAi(),
         current_build_options: currentIndexBuildOptions(),
         user_question: question,
+        mode_hint: mode,
         conversation_history: conversationHistory,
+        index_id: state.activeIndex?.id || null,
+        current_results: compactCurrentResultsForAi(),
+        selected_cell_id: selectedCellId,
+        query_context: {
+          selected_cell_id: selectedCellId,
+          query_mode: trimText(queryModeMetric?.textContent),
+        },
       }),
       timeoutMs: 60000,
     });
+    if (mode === "cell_query") {
+      await syncAiCellAnalysisResponse(response);
+    }
     appendAiAssistantMessage("assistant", response.answer || "", {
       meta: aiAssistantDatasetSummaryLine(response.dataset_summary || null),
+      artifacts: buildAiAssistantArtifacts(response),
+      linkedQuestion: question,
     });
     setMessage(
       aiAssistantStatus,
-      `AI 已回复（${response.model || "LLM"}）`,
+      `AI 已回复（${response.model || "LLM"}，${currentAiAssistantConfig().label}）`,
       "success"
     );
     if (aiAssistantInput) aiAssistantInput.value = "";
+    syncAiAssistantComposerState();
     return response;
   } catch (error) {
     setMessage(aiAssistantStatus, error.message, "error");
     throw error;
   } finally {
     state.aiAssistantBusy = false;
-    if (aiAssistantSuggestedQuestionBtn) aiAssistantSuggestedQuestionBtn.disabled = false;
-    if (aiAssistantSendBtn) aiAssistantSendBtn.disabled = false;
+    syncAiAssistantComposerState();
   }
 }
 
@@ -1057,6 +1787,38 @@ function postJson(url, payload) {
   });
 }
 
+async function uploadDatasetFile(file) {
+  if (!file) {
+    throw new Error("请选择要上传的 CSV 或 h5ad 文件");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  const headers = {};
+  if (state.authToken) {
+    headers.Authorization = `Bearer ${state.authToken}`;
+  }
+
+  const response = await fetch("/api/dataset/upload", {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  const rawText = await response.text();
+  let data = {};
+  if (rawText) {
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      throw new Error("Failed to parse server response");
+    }
+  }
+  if (!response.ok) {
+    throw new Error(data.error || `Upload failed (${response.status})`);
+  }
+  return data;
+}
+
 function downloadBlob(content, filename, contentType) {
   const blob = new Blob([content], { type: contentType });
   const objectUrl = URL.createObjectURL(blob);
@@ -1115,6 +1877,7 @@ function rowsToCsv(rows) {
 }
 
 function showAuthView() {
+  document.body.classList.add("auth-mode");
   authView.classList.remove("d-none");
   authView.hidden = false;
   hubView.classList.add("d-none");
@@ -1125,6 +1888,7 @@ function showAuthView() {
 }
 
 function showHubView() {
+  document.body.classList.remove("auth-mode");
   authView.classList.add("d-none");
   authView.hidden = true;
   hubView.classList.remove("d-none");
@@ -1140,11 +1904,15 @@ function showHubView() {
 }
 
 function resizeAllCharts() {
-  if (state.umapChart) state.umapChart.resize();
-  Object.values(state.charts).forEach((chart) => chart?.resize?.());
+  syncUmapCanvasResolution();
+  Object.values(state.charts).forEach((chart) => {
+    if (!chart) return;
+    resizeChartToElement(chart, chart.getDom?.());
+  });
 }
 
 function showMainView() {
+  document.body.classList.remove("auth-mode");
   authView.classList.add("d-none");
   authView.hidden = true;
   hubView.classList.add("d-none");
@@ -1708,6 +2476,7 @@ function normalizeDatasetInfo(raw = {}, fallbackPath = "") {
     cell_count: raw.cell_count ?? raw.total_points ?? null,
     gene_count: raw.gene_count ?? null,
     vector_dim: raw.vector_dim ?? null,
+    original_vector_dim: raw.original_vector_dim ?? null,
     embedding_key: raw.embedding_key || "-",
     visualization_source: raw.visualization_source || "-",
     metadata_columns: raw.metadata_columns || raw.metadata_keys || [],
@@ -1720,12 +2489,16 @@ function renderDatasetInfo(info = {}) {
     ["Format", info.format || "-"],
     ["Cells", formatNumber(info.cell_count)],
     ["Genes", formatNumber(info.gene_count)],
+    ["Original Dim", formatNumber(info.original_vector_dim)],
     ["Vector Dim", formatNumber(info.vector_dim)],
     ["Embedding", info.embedding_key || "-"],
     ["Viz Source", info.visualization_source || "-"],
   ];
   datasetInfo.innerHTML = fields
-    .map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd>`)
+    .map(
+      ([label, value]) =>
+        `<div class="dataset-info-item"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`
+    )
     .join("");
 }
 
@@ -1742,7 +2515,7 @@ function noDataOption(text) {
       top: "middle",
       style: {
         text,
-        fill: "#94a3b8",
+        fill: "#64748b",
         fontSize: 13,
       },
     },
@@ -1752,8 +2525,9 @@ function noDataOption(text) {
 function getOrCreateChart(key, element) {
   if (!window.echarts || !element) return null;
   if (!state.charts[key]) {
-    state.charts[key] = window.echarts.init(element, null, { renderer: "canvas" });
+    state.charts[key] = window.echarts.init(element, null, buildChartInitOptions());
   }
+  resizeChartToElement(state.charts[key], element);
   return state.charts[key];
 }
 
@@ -2050,8 +2824,8 @@ function renderCellTypeCharts(analytics) {
           type: "pie",
           radius: ["44%", "72%"],
           center: ["50%", "50%"],
-          itemStyle: { borderWidth: 2, borderColor: "rgba(9,16,28,0.92)" },
-          label: { color: "#cbd5e1", formatter: "{b}" },
+          itemStyle: { borderWidth: 2, borderColor: "#ffffff" },
+          label: { color: "#111827", formatter: "{b}" },
           data: rows.map((item) => ({ name: item.name, value: item.count })),
         },
       ],
@@ -2063,27 +2837,27 @@ function renderCellTypeCharts(analytics) {
     {
       animationDuration: 220,
       tooltip: { trigger: "axis" },
-      legend: { top: 0, textStyle: { color: "#cbd5e1" } },
+      legend: { top: 0, textStyle: { color: "#374151" } },
       grid: { left: 52, right: 20, top: 34, bottom: 50 },
       xAxis: {
         type: "category",
-        axisLabel: { color: "#94a3b8", rotate: 18 },
-        axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+        axisLabel: { color: "#475569", rotate: 18 },
+        axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
         data: rows.map((item) => item.name),
       },
       yAxis: [
         {
           type: "value",
           name: "基因数",
-          nameTextStyle: { color: "#94a3b8" },
-          axisLabel: { color: "#94a3b8" },
-          splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+          nameTextStyle: { color: "#475569" },
+          axisLabel: { color: "#475569" },
+          splitLine: { lineStyle: { color: "rgba(148,163,184,0.14)" } },
         },
         {
           type: "value",
           name: "线粒体%",
-          nameTextStyle: { color: "#94a3b8" },
-          axisLabel: { color: "#94a3b8" },
+          nameTextStyle: { color: "#475569" },
+          axisLabel: { color: "#475569" },
           splitLine: { show: false },
         },
       ],
@@ -2163,26 +2937,26 @@ function renderSampleCharts(analytics) {
         right: 12,
         itemWidth: 16,
         itemHeight: 10,
-        textStyle: { color: "#d7e0ec", fontSize: 11 },
-        pageTextStyle: { color: "#b6c3d5" },
+        textStyle: { color: "#374151", fontSize: 11 },
+        pageTextStyle: { color: "#64748b" },
       },
       grid: { left: 48, right: 16, top: 74, bottom: 76, containLabel: false },
       xAxis: {
         type: "category",
         data: samples,
         axisLabel: {
-          color: "#aebcd0",
+          color: "#475569",
           rotate: 28,
           interval: 0,
           fontSize: 10,
           formatter: (value) => compactChartLabel(value, 11),
         },
-        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
+        axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
       },
       yAxis: {
         type: "value",
-        axisLabel: { color: "#aebcd0", fontSize: 10 },
-        splitLine: { lineStyle: { color: "rgba(176,196,222,0.1)" } },
+        axisLabel: { color: "#475569", fontSize: 10 },
+        splitLine: { lineStyle: { color: "rgba(148,163,184,0.14)" } },
       },
       series: visibleSeries.map((item) => ({
         ...item,
@@ -2210,23 +2984,23 @@ function renderSampleCharts(analytics) {
         type: "category",
         data: similarityLabels,
         axisLabel: {
-          color: "#aebcd0",
+          color: "#475569",
           rotate: 28,
           interval: 0,
           fontSize: 10,
           formatter: (value) => compactChartLabel(value, 9),
         },
-        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
+        axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
       },
       yAxis: {
         type: "category",
         data: similarityLabels,
         axisLabel: {
-          color: "#aebcd0",
+          color: "#475569",
           fontSize: 10,
           formatter: (value) => compactChartLabel(value, 9),
         },
-        axisLine: { lineStyle: { color: "rgba(176,196,222,0.28)" } },
+        axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
       },
       visualMap: {
         min: 0,
@@ -2239,7 +3013,7 @@ function renderSampleCharts(analytics) {
         itemHeight: 150,
         text: ["高", "低"],
         textGap: 8,
-        textStyle: { color: "#aebcd0", fontSize: 10 },
+        textStyle: { color: "#475569", fontSize: 10 },
       },
       series: [
         {
@@ -2281,13 +3055,13 @@ function renderQualityCharts(analytics) {
         xAxis: {
           type: "category",
           data: histogram.bins.map((item) => formatMetric(item)),
-          axisLabel: { color: "#94a3b8", showMinLabel: true, showMaxLabel: true },
-          axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+          axisLabel: { color: "#475569", showMinLabel: true, showMaxLabel: true },
+          axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
         },
         yAxis: {
           type: "value",
-          axisLabel: { color: "#94a3b8" },
-          splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+          axisLabel: { color: "#475569" },
+          splitLine: { lineStyle: { color: "rgba(148,163,184,0.14)" } },
         },
         series: [
           {
@@ -2311,13 +3085,13 @@ function renderQualityCharts(analytics) {
         xAxis: {
           type: "category",
           data: boxplot.labels,
-          axisLabel: { color: "#94a3b8", rotate: 16 },
-          axisLine: { lineStyle: { color: "rgba(148,163,184,0.2)" } },
+          axisLabel: { color: "#475569", rotate: 16 },
+          axisLine: { lineStyle: { color: "rgba(148,163,184,0.35)" } },
         },
         yAxis: {
           type: "value",
-          axisLabel: { color: "#94a3b8" },
-          splitLine: { lineStyle: { color: "rgba(148,163,184,0.08)" } },
+          axisLabel: { color: "#475569" },
+          splitLine: { lineStyle: { color: "rgba(148,163,184,0.14)" } },
         },
         series: [
           {
@@ -2642,11 +3416,10 @@ function cellIdsFromBrushAreas(areas = []) {
   }
   return selected;
 }
-function initUmapChartIfNeeded() {
-  if (state.umapChart || !window.echarts || !umapChartElement) return;
-  state.umapChart = window.echarts.init(umapChartElement, null, { renderer: "canvas" });
-  state.umapChart.setOption(buildUmapOption([], [], null, null));
-  state.umapChart.on("click", async (params) => {
+
+function bindUmapChartEvents(chart) {
+  if (!chart) return;
+  chart.on("click", async (params) => {
     const cellId = params?.data?.cell_id;
     if (!cellId) return;
     selectCell(cellId, { syncRow: false });
@@ -2655,7 +3428,7 @@ function initUmapChartIfNeeded() {
       setMessage(queryStatus, "该细胞不在当前 Top-K 查询结果中，已在右侧显示细胞详情。", "neutral");
     }
   });
-  state.umapChart.on("brushSelected", (params) => {
+  chart.on("brushSelected", (params) => {
     const selectedCellIds = [];
     const batches = Array.isArray(params?.batch) ? params.batch : [];
     batches.forEach((batch) => {
@@ -2671,18 +3444,113 @@ function initUmapChartIfNeeded() {
       applyUmapBrushSelection(selectedCellIds);
     }
   });
-  state.umapChart.on("brushEnd", (params) => {
+  chart.on("brushEnd", (params) => {
     const areas = Array.isArray(params?.areas) ? params.areas : [];
     applyUmapBrushSelection(cellIdsFromBrushAreas(areas));
   });
-  window.addEventListener("resize", () => {
-    resizeAllCharts();
+}
+
+function recreateUmapChart(preserveView = true) {
+  if (!window.echarts || !umapChartElement) return null;
+  const viewportState = preserveView ? captureUmapViewportState() : null;
+  if (state.umapChart) {
+    state.umapChart.dispose();
+    state.umapChart = null;
+  }
+  state.umapChart = window.echarts.init(umapChartElement, null, buildChartInitOptions());
+  state.umapChartDpr = getCurrentDevicePixelRatio();
+  bindUmapChartEvents(state.umapChart);
+  resizeChartToElement(state.umapChart, umapChartElement);
+  state.umapChart.setOption(
+    buildUmapOption(
+      state.umapBaseSeries || [],
+      state.umapHighlights || [],
+      state.umapQueryCenter,
+      buildFocusedPoint(state.umapFocusedCellId)
+    ),
+    true
+  );
+  restoreUmapViewportState(state.umapChart, viewportState);
+  return state.umapChart;
+}
+
+function ensureUmapResizeObserver() {
+  if (state.umapResizeObserver || !window.ResizeObserver || !umapChartElement) return;
+  state.umapResizeObserver = new window.ResizeObserver(() => {
+    window.requestAnimationFrame(() => {
+      syncUmapCanvasResolution();
+    });
   });
+  state.umapResizeObserver.observe(umapChartElement);
+}
+
+function syncUmapCanvasResolution() {
+  if (!state.umapChart || !umapChartElement) return;
+  resizeChartToElement(state.umapChart, umapChartElement);
+  const dpr = getCurrentDevicePixelRatio();
+  const dprChanged = Math.abs((state.umapChartDpr || dpr) - dpr) > 0.01;
+  if (dprChanged || !canvasMatchesDevicePixelRatio(umapChartElement, dpr)) {
+    recreateUmapChart(true);
+  }
+}
+
+function setMessageWithAction(
+  element,
+  message,
+  tone,
+  actionLabel,
+  onAction,
+  classSuffix = "",
+  autoHideMs = 0
+) {
+  setMessage(element, message, tone, classSuffix, autoHideMs);
+  if (!element || !actionLabel || typeof onAction !== "function") return;
+  const actionBtn = document.createElement("button");
+  actionBtn.type = "button";
+  actionBtn.className = "status-message-action";
+  actionBtn.textContent = actionLabel;
+  actionBtn.addEventListener("click", onAction);
+  element.appendChild(actionBtn);
+}
+
+function refreshFileInputName(input, nameElement) {
+  if (!input || !nameElement) return;
+  const file = input.files?.[0] || null;
+  const text = file?.name || "未选择文件";
+  nameElement.textContent = text;
+  const shell = nameElement.closest(".file-input-shell");
+  if (shell) shell.classList.toggle("has-file", Boolean(file));
+}
+
+function bindFileInputName(input, nameElement) {
+  if (!input || !nameElement) return;
+  refreshFileInputName(input, nameElement);
+  input.addEventListener("change", () => {
+    refreshFileInputName(input, nameElement);
+  });
+}
+
+bindFileInputName(hubDatasetFile, hubDatasetFileName);
+bindFileInputName(datasetFileInput, datasetFileName);
+
+function initUmapChartIfNeeded() {
+  if (!window.echarts || !umapChartElement) return;
+  if (!state.umapChart) {
+    recreateUmapChart(false);
+  }
+  ensureUmapResizeObserver();
+  if (!state.chartResizeBound) {
+    window.addEventListener("resize", resizeAllCharts);
+    state.chartResizeBound = true;
+  }
+  syncUmapCanvasResolution();
 }
 
 function buildUmapOption(baseData, highlightData, queryCenter, focusedPoint) {
   return {
     animation: false,
+    animationThreshold: 2000,
+    hoverLayerThreshold: 1000000,
     brush: {
       toolbox: ["rect", "clear"],
       xAxisIndex: 0,
@@ -2777,21 +3645,34 @@ function buildUmapOption(baseData, highlightData, queryCenter, focusedPoint) {
     series: [
       {
         name: "All Cells",
-        type: "scatterGL",
-        progressive: 6000,
-        progressiveThreshold: 10000,
+        type: "scatter",
+        progressive: 12000,
+        progressiveThreshold: 30000,
+        large: false,
+        largeThreshold: 1000000,
         data: baseData,
+        symbol: "circle",
         symbolSize(value) {
-          return value?.[2] ?? 2.4;
+          return Math.max(value?.[2] ?? 3.2, 3.2);
         },
-        blendMode: "lighter",
-        itemStyle: { opacity: 0.42 },
+        blendMode: "source-over",
+        itemStyle: {
+          color: "#7dd3fc",
+          opacity: 0.82,
+        },
+        emphasis: {
+          scale: false,
+          itemStyle: {
+            opacity: 0.96,
+          },
+        },
         silent: false,
       },
       {
         name: "Hits",
         type: "scatter",
         data: highlightData,
+        symbol: "circle",
         symbolSize(value) {
           return Math.max(7.5, 10.8 - Math.min((value?.[2] || 1) - 1, 7) * 0.65);
         },
@@ -2799,7 +3680,7 @@ function buildUmapOption(baseData, highlightData, queryCenter, focusedPoint) {
           color: "#ffffff",
           borderColor: "#ef4444",
           borderWidth: 2,
-          shadowBlur: 18,
+          shadowBlur: 10,
           shadowColor: "rgba(239,68,68,0.55)",
         },
         z: 20,
@@ -2808,12 +3689,13 @@ function buildUmapOption(baseData, highlightData, queryCenter, focusedPoint) {
         name: "Query Center",
         type: "scatter",
         data: queryCenter ? [queryCenter] : [],
+        symbol: "circle",
         symbolSize: 16,
         itemStyle: {
           color: "#fbbf24",
           borderColor: "#fff7cc",
           borderWidth: 2,
-          shadowBlur: 20,
+          shadowBlur: 12,
           shadowColor: "rgba(251,191,36,0.65)",
         },
         z: 30,
@@ -2822,12 +3704,13 @@ function buildUmapOption(baseData, highlightData, queryCenter, focusedPoint) {
         name: "Focused Cell",
         type: "scatter",
         data: focusedPoint ? [focusedPoint] : [],
+        symbol: "circle",
         symbolSize: 13,
         itemStyle: {
           color: "#fde68a",
           borderColor: "#ffffff",
           borderWidth: 2,
-          shadowBlur: 22,
+          shadowBlur: 12,
           shadowColor: "rgba(253,230,138,0.7)",
         },
         z: 35,
@@ -2960,7 +3843,7 @@ function applyUmapFiltersLocally() {
   state.umapBaseSeries = filteredPoints.map((point) => {
     state.umapFilteredPointByCellId.set(point.cell_id, point);
     return {
-      value: [point.x, point.y, 2.2],
+      value: [point.x, point.y, 3.2],
       cell_id: point.cell_id,
       metadata: point.metadata,
       itemStyle: buildBaseItemStyle(point),
@@ -3126,13 +4009,15 @@ async function loadHistoryIndexes() {
     state.historyIndexes = [];
     historyCards.innerHTML = "";
     const timeoutLike = /timeout/i.test(error.message || "");
-    setMessage(
-      hubHistoryMessage,
-      timeoutLike
-        ? "历史索引加载超时，可先直接录入数据集进入核心页面"
-        : `历史索引加载失败：${error.message}`,
-      timeoutLike ? "neutral" : "error"
-    );
+    if (timeoutLike) {
+      setMessage(hubHistoryMessage, "历史索引加载超时，可先直接录入数据集进入核心页面", "neutral");
+    } else {
+      setMessageWithAction(hubHistoryMessage, `历史索引加载失败：${error.message}`, "error", "重试", () => {
+        loadHistoryIndexes().catch((retryError) => {
+          setMessage(hubHistoryMessage, retryError.message, "error");
+        });
+      });
+    }
   }
 }
 
@@ -3147,12 +4032,13 @@ function renderHistoryCards(indexes) {
   historyCards.innerHTML = indexes
     .map((item) => {
       const statusLabel = item.is_active ? "Active" : "History";
-      const parameterRows = historyIndexParamEntries(item)
-        .map(
-          ([label, value]) =>
-            `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value === null || value === undefined || value === "" ? "--" : String(value))}</dd>`
-        )
-        .join("");
+      const datasetTitle = deriveDatasetTitle(item);
+      const datasetSubtitle = deriveDatasetSubtitle(item);
+      const indexLabel = humanizeIndexType(item.index_type);
+      const metricLabel = humanizeDistanceMetric(item.distance_metric, item.effective_metric);
+      const vectorsText = item.cell_count ? formatNumber(item.cell_count) : "--";
+      const dimensionText = item.vector_dim ? formatNumber(item.vector_dim) : "--";
+      const buildText = formatCompactTimeMs(item.build_time_ms);
       return `
         <article class="history-card">
           <button
@@ -3164,20 +4050,38 @@ function renderHistoryCards(indexes) {
           >
             &times;
           </button>
-          <h3 class="history-card-title">${escapeHtml(item.index_name)}</h3>
-          <p class="history-card-subtitle">${escapeHtml(statusLabel)} | updated ${escapeHtml(item.updated_at || "-")}</p>
-          <dl class="history-card-meta">
-            <dt>Data Path</dt><dd>${escapeHtml(item.data_path || "-")}</dd>
-            <dt>Collection</dt><dd>${escapeHtml(item.collection_name || "-")}</dd>
-            <dt>Format</dt><dd>${escapeHtml(item.source_format || "-")}</dd>
-            <dt>Index Type</dt><dd>${escapeHtml(humanizeIndexType(item.index_type))}</dd>
-            <dt>Metric</dt><dd>${escapeHtml(humanizeDistanceMetric(item.distance_metric, item.effective_metric))}</dd>
-            ${parameterRows}
-            <dt>Cells</dt><dd>${escapeHtml(formatNumber(item.cell_count))}</dd>
-            <dt>Vector Dim</dt><dd>${escapeHtml(formatNumber(item.vector_dim))}</dd>
-            <dt>Build Time</dt><dd>${escapeHtml(formatTime(item.build_time_ms))}</dd>
+          <div class="history-card-header">
+            <div class="history-card-header-copy">
+              <div class="history-card-kicker-row">
+                <span class="history-card-kicker-dot${item.is_active ? " is-active" : ""}" aria-hidden="true"></span>
+                <span class="history-card-kicker">${escapeHtml(statusLabel)}</span>
+              </div>
+              <h3 class="history-card-title" title="${escapeHtml(datasetTitle)}">${escapeHtml(datasetTitle)}</h3>
+              <p class="history-card-subtitle" title="${escapeHtml(datasetSubtitle)}">${escapeHtml(datasetSubtitle)}</p>
+            </div>
+          </div>
+          <div class="history-card-summary">
+            <p class="history-card-summary-title">${escapeHtml(indexLabel)} Index</p>
+            <p class="history-card-summary-subtitle">${escapeHtml(metricLabel)} similarity</p>
+          </div>
+          <dl class="history-card-stat-grid">
+            <div class="history-card-stat">
+              <dt>Vectors</dt>
+              <dd>${escapeHtml(vectorsText)}</dd>
+            </div>
+            <div class="history-card-stat">
+              <dt>Dimension</dt>
+              <dd>${escapeHtml(dimensionText)}</dd>
+            </div>
           </dl>
-          <button class="btn action-btn secondary-btn btn-sm mt-2" data-open-index="${item.id}">Open</button>
+          <div class="history-card-build-row">
+            <span class="history-card-build-label">Build</span>
+            <span class="history-card-build-value">${escapeHtml(buildText)}</span>
+          </div>
+          <div class="history-card-footer">
+            <p class="history-card-footnote" title="${escapeHtml(datasetSubtitle)}">${escapeHtml(datasetSubtitle)}</p>
+            <button class="btn action-btn secondary-btn btn-sm mt-2 history-card-open-btn" data-open-index="${item.id}">Open →</button>
+          </div>
         </article>
       `;
     })
@@ -3292,11 +4196,41 @@ async function openNewDatasetFromHub() {
   }
 }
 
+async function uploadDatasetFromHub() {
+  const file = hubDatasetFile?.files?.[0] || null;
+  if (!file) {
+    setMessage(hubNewDatasetMessage, "请选择要上传的 CSV 或 h5ad 文件", "error");
+    return;
+  }
+
+  if (uploadDatasetBtn) uploadDatasetBtn.disabled = true;
+  if (openNewDatasetBtn) openNewDatasetBtn.disabled = true;
+  setMessage(hubNewDatasetMessage, "Uploading dataset...", "neutral");
+  try {
+    const uploaded = await uploadDatasetFile(file);
+    const path = uploaded.data_path || "";
+    if (!path) throw new Error("Uploaded dataset path missing");
+    hubDataPath.value = path;
+    state.activeIndex = null;
+    await enterCorePage({
+      dataPath: path,
+      info: normalizeDatasetInfo(uploaded.dataset || {}, path),
+      indexRecord: null,
+    });
+    setMessage(hubNewDatasetMessage, `Uploaded dataset: ${path}`, "success");
+  } catch (error) {
+    setMessage(hubNewDatasetMessage, error.message, "error");
+  } finally {
+    if (uploadDatasetBtn) uploadDatasetBtn.disabled = false;
+    if (openNewDatasetBtn) openNewDatasetBtn.disabled = false;
+  }
+}
+
 async function enterCorePage({ dataPath, info, indexRecord }) {
   setCurrentDataset(dataPath);
   state.currentDatasetInfo = normalizeDatasetInfo(info || {}, state.currentDataPath);
   state.activeIndex = indexRecord || null;
-  state.aiAssistantOpen = false;
+  state.aiAssistantOpen = true;
   if (aiAssistantInput) aiAssistantInput.value = "";
   resetAiAssistantConversation();
   setMessage(aiAssistantStatus, "可点击上方推荐问题，或在底部输入任意问题。", "neutral");
@@ -3309,6 +4243,7 @@ async function enterCorePage({ dataPath, info, indexRecord }) {
   }
 
   showMainView();
+  setAiAssistantPanelOpen(true);
   resetMainPageOutputs();
   setIndexProgressVisible(false);
   stopBuildElapsedTicker();
@@ -3449,6 +4384,42 @@ async function inspectDatasetFromMain() {
     setMessage(indexStatus, error.message, "error");
   } finally {
     inspectDataBtn.disabled = false;
+  }
+}
+
+async function uploadDatasetFromMain() {
+  const file = datasetFileInput?.files?.[0] || null;
+  if (!file) {
+    setMessage(indexStatus, "请选择要上传的 CSV 或 h5ad 文件", "error");
+    return;
+  }
+
+  if (uploadDataBtn) uploadDataBtn.disabled = true;
+  if (inspectDataBtn) inspectDataBtn.disabled = true;
+  if (buildIndexBtn) buildIndexBtn.disabled = true;
+  setMessage(indexStatus, "Uploading dataset...", "neutral");
+  try {
+    const uploaded = await uploadDatasetFile(file);
+    const path = uploaded.data_path || "";
+    if (!path) throw new Error("Uploaded dataset path missing");
+    dataPathInput.value = path;
+    state.activeIndex = null;
+    setCurrentDataset(path);
+    state.currentDatasetInfo = normalizeDatasetInfo(uploaded.dataset || {}, path);
+    renderDatasetInfo(state.currentDatasetInfo);
+    setBadgeState("is-idle", "No Index", "Dataset uploaded, build index when needed");
+    await Promise.all([
+      loadUmapForCurrentDataset(),
+      loadAnalyticsForCurrentDataset(),
+      loadMetadataOptionsForCurrentDataset(),
+    ]);
+    setMessage(indexStatus, `Dataset uploaded: ${path}`, "success");
+  } catch (error) {
+    setMessage(indexStatus, error.message, "error");
+  } finally {
+    if (uploadDataBtn) uploadDataBtn.disabled = false;
+    if (inspectDataBtn) inspectDataBtn.disabled = false;
+    if (buildIndexBtn) buildIndexBtn.disabled = false;
   }
 }
 
@@ -3802,11 +4773,13 @@ async function searchByVector() {
     return;
   }
 
-  let vector;
   let topK;
+  const csvFile = queryVectorCsvInput?.files?.[0] || null;
   try {
-    vector = parseVectorInput();
     topK = positiveTopK(topKVectorInput);
+    if (!csvFile) {
+      parseVectorInput();
+    }
   } catch (error) {
     setMessage(queryStatus, error.message, "error");
     await showTableState(error.message, "error");
@@ -3824,13 +4797,40 @@ async function searchByVector() {
   setQueryMetrics({ mode: "Search by Vector", resultCount: 0, queryTime: null, highlightCount: 0 });
 
   try {
-    const data = await postJson("/api/search/by-vector", {
-      vector,
-      top_k: topK,
-      filters: activeFilters(),
-      index_id: state.activeIndex.id,
-      evaluate,
-    });
+    let data;
+    if (csvFile) {
+      const formData = new FormData();
+      formData.append("file", csvFile);
+      formData.append("top_k", String(topK));
+      formData.append("index_id", String(state.activeIndex.id));
+      formData.append("filters", JSON.stringify(activeFilters()));
+      formData.append("evaluate", evaluate ? "true" : "false");
+      const headers = {};
+      if (state.authToken) headers.Authorization = `Bearer ${state.authToken}`;
+      const response = await fetch("/api/search/by-vector-csv", {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+      const rawText = await response.text();
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error("Failed to parse server response");
+      }
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status})`);
+      }
+    } else {
+      const vector = parseVectorInput();
+      data = await postJson("/api/search/by-vector", {
+        vector,
+        top_k: topK,
+        filters: activeFilters(),
+        index_id: state.activeIndex.id,
+        evaluate,
+      });
+    }
     await renderResults(data.results);
     const highlightCount = applyUmapHighlights(data.results, "Vector query");
     if (Array.isArray(data.results) && data.results.length) {
@@ -3844,7 +4844,9 @@ async function searchByVector() {
     });
     setMessage(
       queryStatus,
-      `Done: ${Array.isArray(data.results) ? data.results.length : 0} results, ${formatTime(data.query_time_ms)}`,
+      `Done: ${Array.isArray(data.results) ? data.results.length : 0} results, ${formatTime(data.query_time_ms)}${
+        data.query?.csv ? `, CSV dim ${data.query.csv.input_dim}` : ""
+      }`,
       "success"
     );
     refreshEvaluationUI(data.evaluation || null, evaluate);
@@ -3936,11 +4938,21 @@ if (resultsPagination) {
 logoutBtn.addEventListener("click", clearSession);
 hubLogoutBtn.addEventListener("click", clearSession);
 
-openNewDatasetBtn.addEventListener("click", () => {
+function handleOpenNewDatasetFromHub() {
   openNewDatasetFromHub().catch((error) => {
     setMessage(hubNewDatasetMessage, error.message, "error");
   });
-});
+}
+
+openNewDatasetBtn.addEventListener("click", handleOpenNewDatasetFromHub);
+
+if (uploadDatasetBtn) {
+  uploadDatasetBtn.addEventListener("click", () => {
+    uploadDatasetFromHub().catch((error) => {
+      setMessage(hubNewDatasetMessage, error.message, "error");
+    });
+  });
+}
 
 if (aiAssistantLauncher) {
   aiAssistantLauncher.addEventListener("click", () => {
@@ -3974,7 +4986,97 @@ window.addEventListener("resize", () => {
   if (state.contextHelpOpen) {
     setContextHelpOpen(true);
   }
+  if (aiAssistantPanel && !aiAssistantPanel.hidden) {
+    ensureAiAssistantPanelPosition();
+  }
 });
+
+if (aiAssistantDragHandle) {
+  aiAssistantDragHandle.addEventListener("mousedown", (event) => {
+    if (event.button !== 0 || !aiAssistantPanel) return;
+    if (!state.aiAssistantMoveEnabled) return;
+    if (state.aiAssistantFullscreen) return;
+    if (event.target.closest("button")) return;
+    const rect = aiAssistantPanel.getBoundingClientRect();
+    state.aiAssistantDrag.active = true;
+    state.aiAssistantDrag.offsetX = event.clientX - rect.left;
+    state.aiAssistantDrag.offsetY = event.clientY - rect.top;
+    aiAssistantPanel.classList.add("is-dragging");
+    event.preventDefault();
+  });
+}
+
+document.addEventListener("mousemove", (event) => {
+  if (!state.aiAssistantDrag.active || !aiAssistantPanel) return;
+  applyAiAssistantPanelPosition(
+    {
+      left: event.clientX - state.aiAssistantDrag.offsetX,
+      top: event.clientY - state.aiAssistantDrag.offsetY,
+    },
+    { persist: false }
+  );
+});
+
+document.addEventListener("mouseup", () => {
+  if (!state.aiAssistantDrag.active || !aiAssistantPanel) return;
+  state.aiAssistantDrag.active = false;
+  aiAssistantPanel.classList.remove("is-dragging");
+  if (state.aiAssistantPosition) {
+    saveAiAssistantPosition(state.aiAssistantPosition);
+  }
+});
+
+if (aiAssistantMoveToggle) {
+  aiAssistantMoveToggle.addEventListener("click", () => {
+    if (state.aiAssistantFullscreen) {
+      setMessage(aiAssistantStatus, "请先退出全屏，再开启移动模式。", "neutral", "", 1800);
+      return;
+    }
+    state.aiAssistantMoveEnabled = !state.aiAssistantMoveEnabled;
+    syncAiAssistantMoveUI();
+    setMessage(
+      aiAssistantStatus,
+      state.aiAssistantMoveEnabled ? "移动模式已开启，可拖动顶部移动窗口。" : "移动模式已关闭，窗口当前位置已固定。",
+      "neutral",
+      "",
+      1800
+    );
+  });
+}
+
+if (aiAssistantFullscreenToggle) {
+  aiAssistantFullscreenToggle.addEventListener("click", () => {
+    state.aiAssistantFullscreen = !state.aiAssistantFullscreen;
+    if (state.aiAssistantFullscreen) {
+      state.aiAssistantMoveEnabled = false;
+    }
+    syncAiAssistantMoveUI();
+    if (state.aiAssistantFullscreen) {
+      ensureAiAssistantPanelPosition();
+      setMessage(aiAssistantStatus, "已切换为全屏显示。", "neutral", "", 1800);
+      return;
+    }
+    ensureAiAssistantPanelPosition({ forceDefault: true });
+    setMessage(aiAssistantStatus, "已恢复默认大小。", "neutral", "", 1800);
+  });
+}
+
+if (aiAssistantConversationToggle) {
+  aiAssistantConversationToggle.addEventListener("click", () => {
+    state.aiAssistantConversationExpanded = !state.aiAssistantConversationExpanded;
+    syncAiAssistantMoveUI();
+    setMessage(
+      aiAssistantStatus,
+      state.aiAssistantConversationExpanded ? "已展开对话区，长对话现在会拥有更多空间。" : "已收起对话区，恢复完整助手布局。",
+      "neutral",
+      "",
+      1800
+    );
+    window.requestAnimationFrame(() => {
+      scrollAiAssistantMessagesToBottom();
+    });
+  });
+}
 
 if (aiAssistantClose) {
   aiAssistantClose.addEventListener("click", () => {
@@ -3982,9 +5084,31 @@ if (aiAssistantClose) {
   });
 }
 
-if (aiAssistantSuggestedQuestionBtn) {
-  aiAssistantSuggestedQuestionBtn.addEventListener("click", () => {
-    sendAiAssistantQuestion(AI_ASSISTANT_SUGGESTED_QUESTION).catch(() => undefined);
+if (aiAssistantModeCards) {
+  aiAssistantModeCards.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-ai-mode]");
+    if (!trigger) return;
+    const nextMode = trimText(trigger.dataset.aiMode || "");
+    if (!AI_ASSISTANT_MODE_CONFIG[nextMode] || nextMode === currentAiAssistantMode()) return;
+    state.aiAssistantMode = nextMode;
+    syncAiAssistantModeUI({ resetConversation: true });
+  });
+}
+
+if (aiAssistantRefreshSuggestions) {
+  aiAssistantRefreshSuggestions.addEventListener("click", () => {
+    rotateAiAssistantSuggestions();
+  });
+}
+
+if (aiAssistantSuggestionsList) {
+  aiAssistantSuggestionsList.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-ai-suggested-question]");
+    if (!trigger) return;
+    const question = trimText(trigger.dataset.aiSuggestedQuestion || "");
+    if (!question) return;
+    fillAiAssistantInput(question);
+    setMessage(aiAssistantStatus, "推荐问题已填入输入框，可继续编辑或直接发送。", "neutral", "", 2200);
   });
 }
 
@@ -3994,11 +5118,82 @@ if (aiAssistantSendBtn) {
   });
 }
 
+if (aiAssistantRegenerateBtn) {
+  aiAssistantRegenerateBtn.addEventListener("click", () => {
+    sendAiAssistantQuestion(state.aiAssistantLastQuestion || "").catch(() => undefined);
+  });
+}
+
 if (aiAssistantInput) {
+  aiAssistantInput.addEventListener("input", () => {
+    syncAiAssistantComposerState();
+  });
   aiAssistantInput.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
       event.preventDefault();
       sendAiAssistantQuestion(aiAssistantInput.value || "").catch(() => undefined);
+    }
+  });
+}
+
+if (aiAssistantMessages) {
+  aiAssistantMessages.addEventListener("click", async (event) => {
+    const copyButton = event.target.closest("[data-ai-copy-message-index]");
+    if (copyButton) {
+      const message = state.aiAssistantMessages[Number(copyButton.dataset.aiCopyMessageIndex)];
+      if (!message) return;
+      try {
+        await copyAiAssistantText(message.content || "");
+        setMessage(aiAssistantStatus, "已复制到剪贴板。", "success", "", 1800);
+      } catch (error) {
+        setMessage(aiAssistantStatus, error.message || "复制失败", "error", "", 2200);
+      }
+      return;
+    }
+
+    const editButton = event.target.closest("[data-ai-edit-message-index]");
+    if (editButton) {
+      const message = state.aiAssistantMessages[Number(editButton.dataset.aiEditMessageIndex)];
+      if (!message) return;
+      fillAiAssistantInput(message.content || "");
+      setMessage(aiAssistantStatus, "已将问题填回输入框，你可以继续编辑。", "neutral", "", 2200);
+      return;
+    }
+
+    const resendButton = event.target.closest("[data-ai-resend-message-index]");
+    if (resendButton) {
+      const message = state.aiAssistantMessages[Number(resendButton.dataset.aiResendMessageIndex)];
+      if (!message) return;
+      sendAiAssistantQuestion(message.content || "").catch(() => undefined);
+      return;
+    }
+
+    const regenerateButton = event.target.closest("[data-ai-regenerate-message-index]");
+    if (regenerateButton) {
+      const index = Number(regenerateButton.dataset.aiRegenerateMessageIndex);
+      const message = state.aiAssistantMessages[index];
+      const linkedQuestion = trimText(message?.linkedQuestion || findAiAssistantLinkedQuestion(index));
+      if (!linkedQuestion) return;
+      sendAiAssistantQuestion(linkedQuestion).catch(() => undefined);
+      return;
+    }
+
+    const filterButton = event.target.closest("[data-ai-filter-key]");
+    if (filterButton) {
+      const key = filterButton.dataset.aiFilterKey || "";
+      const value = filterButton.dataset.aiFilterValue || "";
+      applyAiAssistantFilters({ [key]: value });
+      setMessage(queryStatus, `已按 AI 建议应用筛选：${key}=${value}`, "neutral");
+      return;
+    }
+
+    const cellButton = event.target.closest("[data-ai-focus-cell-id]");
+    if (cellButton) {
+      const cellId = trimText(cellButton.dataset.aiFocusCellId || "");
+      if (!cellId) return;
+      selectCell(cellId, { syncRow: true });
+      focusResultRow(cellId).catch(() => undefined);
+      setMessage(queryStatus, `已聚焦 AI 推荐细胞：${cellId}`, "neutral");
     }
   });
 }
@@ -4013,6 +5208,14 @@ inspectDataBtn.addEventListener("click", () => {
     setMessage(indexStatus, error.message, "error");
   });
 });
+
+if (uploadDataBtn) {
+  uploadDataBtn.addEventListener("click", () => {
+    uploadDatasetFromMain().catch((error) => {
+      setMessage(indexStatus, error.message, "error");
+    });
+  });
+}
 
 buildIndexBtn.addEventListener("click", () => {
   buildIndexFromMain().catch((error) => {
@@ -4254,5 +5457,7 @@ if (adminIndexesBody) {
 setQueryMetrics();
 refreshEvaluationUI();
 updateIndexConfigVisibility();
+syncAiAssistantModeUI({ resetConversation: true });
+syncAiAssistantMoveUI();
 showTableState("No query results yet. Build/activate an index then query.").catch(() => undefined);
 checkAuthAndInit();

@@ -1,0 +1,5 @@
+-r requirements-faiss.txt
+
+PyMySQL==1.1.1
+cryptography==42.0.8
+sentence-transformers==3.0.1

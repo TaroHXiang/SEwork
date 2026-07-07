@@ -2,18 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from functools import wraps
+import json
+import mimetypes
 from pathlib import Path
 from time import perf_counter
 from threading import Lock, Thread
 from uuid import uuid4
 
 from flask import Flask, g, jsonify, render_template, request
+import pandas as pd
+from werkzeug.utils import secure_filename
 
 from config import (
     API_METADATA_VALUES_MAX,
     API_TOP_K_MAX,
     API_UMAP_LIMIT_MAX,
+    BASE_DIR,
     DATABASE_URL,
+    DATA_DIR,
     DEFAULT_SAMPLE_DATA,
     MAX_INDEX_BUILD_JOBS,
     SECRET_KEY,
@@ -23,6 +29,7 @@ from config import (
 )
 from services.admin_service import AdminStore
 from services.ai_advisor import AIAdvisorError, DEFAULT_SUGGESTED_QUESTION, build_dataset_context, request_ai_chat
+from services.cell_analysis_agent import analyze_cell_query
 from services.auth_service import AuthError, UserStore
 from services.data_loader import (
     DEFAULT_METADATA_FILTER_FIELDS,
@@ -39,6 +46,7 @@ from services.vector_index import (
 )
 
 
+mimetypes.add_type("text/css", ".css")
 app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET_KEY
 index = CellVectorIndex()
@@ -49,6 +57,7 @@ user_store.mark_unfinished_build_jobs_failed()
 INDEX_BUILD_JOBS: dict[str, dict] = {}
 INDEX_BUILD_JOBS_LOCK = Lock()
 ADMIN_ROLES = {"admin", "super_admin"}
+ALLOWED_DATASET_UPLOAD_EXTENSIONS = {".csv", ".h5ad"}
 
 
 @app.before_request
@@ -230,6 +239,111 @@ def _default_index_name(data_path: str):
     safe_stem = safe_stem or "dataset"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     return f"{safe_stem}_{timestamp}"
+
+
+def _workspace_relative_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(BASE_DIR.resolve())).replace("\\", "/")
+    except Exception:
+        return str(path)
+
+
+def _save_uploaded_dataset(file_storage, user_id: int) -> dict:
+    original_name = secure_filename(file_storage.filename or "")
+    if not original_name:
+        raise ValueError("uploaded file must have a filename")
+
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in ALLOWED_DATASET_UPLOAD_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_DATASET_UPLOAD_EXTENSIONS))
+        raise ValueError(f"unsupported upload format, expected one of: {allowed}")
+
+    upload_dir = DATA_DIR / "uploads" / f"user_{user_id}"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(original_name).stem or "dataset"
+    target_path = upload_dir / f"{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid4().hex[:8]}_{stem}{suffix}"
+    file_storage.save(target_path)
+    return {
+        "filename": original_name,
+        "data_path": _workspace_relative_path(target_path),
+        "size_bytes": int(target_path.stat().st_size),
+    }
+
+
+def _vector_column_sort_key(column_name: str):
+    normalized = str(column_name).strip().lower()
+    match = None
+    if normalized.startswith("dim_"):
+        match = normalized.removeprefix("dim_")
+    elif normalized.startswith("dim"):
+        match = normalized.removeprefix("dim")
+    elif normalized.startswith("v"):
+        match = normalized.removeprefix("v")
+    if match and match.isdigit():
+        return int(match)
+    return normalized
+
+
+def _extract_query_vector_from_csv_upload(file_storage, row_index: int = 0) -> tuple[list[float], dict]:
+    filename = secure_filename(file_storage.filename or "")
+    if Path(filename).suffix.lower() != ".csv":
+        raise ValueError("query vector upload must be a .csv file")
+
+    df = pd.read_csv(file_storage)
+    if df.empty:
+        raise ValueError("query vector CSV must contain at least one row")
+    if row_index < 0 or row_index >= len(df):
+        raise ValueError(f"row_index must be between 0 and {len(df) - 1}")
+
+    columns = list(df.columns)
+    vector_columns = [
+        column
+        for column in columns
+        if re_match_vector_column(column)
+    ]
+    if vector_columns:
+        vector_columns = sorted(vector_columns, key=_vector_column_sort_key)
+    else:
+        excluded = {"cell_id", "id", "barcode"}
+        numeric_df = df.drop(columns=[column for column in columns if str(column).strip().lower() in excluded], errors="ignore")
+        vector_columns = [
+            column
+            for column in numeric_df.columns
+            if pd.api.types.is_numeric_dtype(numeric_df[column])
+        ]
+
+    if not vector_columns:
+        raise ValueError("query vector CSV must contain vector columns such as v1,v2,... or numeric columns")
+
+    values = pd.to_numeric(df.iloc[row_index][vector_columns], errors="coerce")
+    if values.isna().any():
+        raise ValueError("query vector CSV contains non-numeric vector values")
+
+    cell_id = None
+    for candidate in ("cell_id", "id", "barcode"):
+        if candidate in df.columns:
+            cell_id = str(df.iloc[row_index][candidate])
+            break
+
+    return values.astype(float).tolist(), {
+        "filename": filename,
+        "row_index": row_index,
+        "cell_id": cell_id,
+        "vector_columns": [str(column) for column in vector_columns],
+        "input_dim": len(vector_columns),
+        "row_count": len(df),
+    }
+
+
+def re_match_vector_column(column_name: str) -> bool:
+    normalized = str(column_name).strip().lower()
+    if normalized.startswith("dim_"):
+        return normalized.removeprefix("dim_").isdigit()
+    if normalized.startswith("dim"):
+        return normalized.removeprefix("dim").isdigit()
+    if normalized.startswith("v"):
+        return normalized.removeprefix("v").isdigit()
+    return False
 
 
 def _seed_dataset_info(data_path: str):
@@ -1212,6 +1326,41 @@ def admin_audit_logs():
     return jsonify({"logs": admin_store.list_audit_logs(limit=limit)})
 
 
+@app.post("/api/dataset/upload")
+@require_auth
+def upload_dataset():
+    uploaded_file = request.files.get("file")
+    if uploaded_file is None:
+        return jsonify({"error": "file is required"}), 400
+
+    user_id = request.current_user["id"]
+    try:
+        upload_info = _save_uploaded_dataset(uploaded_file, user_id)
+        dataset_info = inspect_cell_dataset(upload_info["data_path"])
+        dataset_record = _ensure_dataset_record(
+            user_id,
+            upload_info["data_path"],
+            dataset_info={
+                **dataset_info,
+                "dataset_name": Path(upload_info["data_path"]).stem or "dataset",
+                "uploaded_filename": upload_info["filename"],
+                "size_bytes": upload_info["size_bytes"],
+            },
+            status="ready",
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "message": "dataset uploaded",
+            **upload_info,
+            "dataset": dataset_info,
+            "dataset_record": dataset_record,
+        }
+    )
+
+
 @app.post("/api/dataset/inspect")
 @require_auth
 def inspect_dataset():
@@ -1541,6 +1690,14 @@ def dataset_metadata_options():
         return jsonify({"error": str(exc)}), 400
 
 
+def _metadata_options_for_ai(data_path: str) -> dict:
+    return load_dataset_metadata_options(
+        data_path=data_path,
+        fields=list(DEFAULT_METADATA_FILTER_FIELDS),
+        max_values_per_field=min(API_METADATA_VALUES_MAX, 120),
+    )
+
+
 @app.post("/api/ai/chat")
 @app.post("/api/ai/index-advice")
 @require_auth
@@ -1590,6 +1747,81 @@ def ai_chat():
             "dataset_summary": dataset_context,
             "answer": ai_result["answer"],
             "suggested_question": ai_result.get("suggested_question") or DEFAULT_SUGGESTED_QUESTION,
+        }
+    )
+
+
+@app.post("/api/ai/cell-query")
+@require_auth
+def ai_cell_query():
+    payload = request.get_json(silent=True) or {}
+    data_path = str(payload.get("data_path") or "").strip()
+    if not data_path:
+        return jsonify({"error": "data_path is required"}), 400
+
+    raw_dataset_info = payload.get("dataset_info")
+    dataset_info = raw_dataset_info if isinstance(raw_dataset_info, dict) else None
+    raw_build_options = payload.get("current_build_options")
+    current_build_options = raw_build_options if isinstance(raw_build_options, dict) else None
+    raw_index_id = payload.get("index_id")
+    user_question = str(payload.get("user_question") or "").strip()[:2000]
+    if not user_question:
+        return jsonify({"error": "user_question is required"}), 400
+    raw_conversation_history = payload.get("conversation_history")
+    conversation_history = raw_conversation_history if isinstance(raw_conversation_history, list) else []
+    raw_current_results = payload.get("current_results")
+    current_results = raw_current_results if isinstance(raw_current_results, list) else []
+    selected_cell_id = str(payload.get("selected_cell_id") or "").strip()
+    raw_query_context = payload.get("query_context")
+    query_context = raw_query_context if isinstance(raw_query_context, dict) else {}
+
+    try:
+        if not dataset_info:
+            dataset_info = inspect_cell_dataset(data_path)
+        dataset_context = build_dataset_context(
+            data_path=data_path,
+            dataset_info=dataset_info,
+            current_build_options=current_build_options,
+        )
+        metadata_options = _metadata_options_for_ai(data_path)
+        index_payload = {"index_id": raw_index_id} if raw_index_id not in (None, "") else {}
+        active_index_record = _resolve_target_index(payload=index_payload, required=False)
+        analysis = analyze_cell_query(
+            question=user_question,
+            data_path=data_path,
+            dataset_context=dataset_context,
+            metadata_options=metadata_options,
+            active_index_record=active_index_record,
+            vector_index=index,
+            api_key=ZHIPU_API_KEY,
+            api_url=ZHIPU_API_URL,
+            model=ZHIPU_MODEL,
+            conversation_history=conversation_history,
+            current_results=current_results,
+            selected_cell_id=selected_cell_id,
+            query_context=query_context,
+        )
+    except AIAdvisorError as exc:
+        error_text = str(exc)
+        status_code = 503 if "not configured" in error_text or "connection failed" in error_text else 400
+        return jsonify({"error": error_text}), status_code
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return _api_ok(
+        {
+            "message": "AI cell analysis ready",
+            "model": analysis["model"],
+            "dataset_summary": dataset_context,
+            "answer": analysis["answer"],
+            "intent": analysis["intent"],
+            "applied_filters": analysis["applied_filters"],
+            "knowledge_hits": analysis["knowledge_hits"],
+            "cell_hits": analysis["cell_hits"],
+            "cell_summary": analysis["cell_summary"],
+            "next_steps": analysis["next_steps"],
+            "retrieval_source": analysis["retrieval_source"],
+            "query_context": analysis.get("query_context") or {},
         }
     )
 
@@ -1849,6 +2081,78 @@ def search_by_vector():
                 "top_k": top_k,
                 "filters": filters,
                 "index_id": index_record["id"],
+            },
+            "query_time_ms": search_output.query_time_ms,
+            "results": search_output.results,
+        }
+    )
+
+
+@app.post("/api/search/by-vector-csv")
+@require_auth
+def search_by_vector_csv():
+    uploaded_file = request.files.get("file")
+    if uploaded_file is None:
+        return jsonify({"error": "file is required"}), 400
+
+    try:
+        top_k = _parse_top_k(request.form.get("top_k", 5))
+        row_index = int(request.form.get("row_index", 0))
+        evaluate = _to_bool(request.form.get("evaluate"), default=False)
+        filters = json.loads(request.form.get("filters") or "{}")
+        if not isinstance(filters, dict):
+            raise ValueError("filters must be a JSON object")
+        index_record = _resolve_target_index({"index_id": request.form.get("index_id")})
+        search_params = index_record.get("search_params") or {}
+        vector, csv_info = _extract_query_vector_from_csv_upload(uploaded_file, row_index=row_index)
+
+        if evaluate:
+            evaluation = index.evaluate_query_by_vector(
+                collection_name=index_record["collection_name"],
+                vector_dim=index_record["vector_dim"],
+                vector=vector,
+                top_k=top_k,
+                filters=filters,
+                search_params=search_params,
+            )
+            return jsonify(
+                {
+                    "query": {
+                        "top_k": top_k,
+                        "filters": filters,
+                        "index_id": index_record["id"],
+                        "csv": csv_info,
+                    },
+                    "query_time_ms": evaluation["ann_query_time_ms"],
+                    "results": evaluation["ann_results"],
+                    "evaluation": {
+                        "precision_at_k": evaluation["precision_at_k"],
+                        "recall_at_k": evaluation["recall_at_k"],
+                        "overlap_count": evaluation["overlap_count"],
+                        "ann_query_time_ms": evaluation["ann_query_time_ms"],
+                        "exact_query_time_ms": evaluation["exact_query_time_ms"],
+                    },
+                }
+            )
+
+        search_output = index.search_by_vector_with_timing(
+            collection_name=index_record["collection_name"],
+            vector_dim=index_record["vector_dim"],
+            vector=vector,
+            top_k=top_k,
+            filters=filters,
+            search_params=search_params,
+        )
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "query": {
+                "top_k": top_k,
+                "filters": filters,
+                "index_id": index_record["id"],
+                "csv": csv_info,
             },
             "query_time_ms": search_output.query_time_ms,
             "results": search_output.results,

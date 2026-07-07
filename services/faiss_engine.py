@@ -63,6 +63,7 @@ class _StoredCollection:
     visualization_points: np.ndarray
     cell_id_to_offset: dict[str, int]
     manifest: dict
+    vector_transform: dict | None = None
 
 
 class CellVectorIndex:
@@ -146,6 +147,7 @@ class CellVectorIndex:
             "gene_count": dataset.gene_count,
             "embedding_key": dataset.embedding_key,
             "visualization_source": dataset.visualization_source,
+            "vector_transform": _vector_transform_metadata(dataset.vector_transform),
         }
         self._persist_collection(
             collection_name=collection_name,
@@ -155,6 +157,7 @@ class CellVectorIndex:
             metadata=dataset.metadata,
             visualization_points=dataset.visualization_points,
             manifest=manifest,
+            vector_transform=dataset.vector_transform,
         )
 
         dataset_summary = {
@@ -337,8 +340,11 @@ class CellVectorIndex:
         collection = self._load_collection(collection_name)
         manifest = collection.manifest
         resolved_distance_metric = str(manifest.get("distance_metric") or distance_metric).strip().lower()
+        query_input = list(vector)
+        if not vector_is_prepared:
+            query_input = _transform_query_vector_if_needed(query_input, collection)
         query_vector = _prepare_query_vector_for_metric(
-            vector=vector,
+            vector=query_input,
             vector_dim=vector_dim,
             distance_metric=resolved_distance_metric,
             vector_is_prepared=vector_is_prepared,
@@ -514,6 +520,7 @@ class CellVectorIndex:
         metadata: list[dict],
         visualization_points: np.ndarray,
         manifest: dict,
+        vector_transform: dict | None = None,
     ) -> None:
         faiss = _require_faiss()
         collection_dir = self._collection_dir(collection_name)
@@ -528,6 +535,7 @@ class CellVectorIndex:
             str(temp_dir / "visualization.npy"),
             np.ascontiguousarray(visualization_points, dtype=np.float32),
         )
+        _persist_vector_transform(temp_dir, vector_transform)
         (temp_dir / "cell_ids.json").write_text(
             json.dumps([str(item) for item in cell_ids], ensure_ascii=False),
             encoding="utf-8",
@@ -560,6 +568,7 @@ class CellVectorIndex:
         visualization_points = np.load(str(collection_dir / "visualization.npy"), allow_pickle=False)
         cell_ids = json.loads((collection_dir / "cell_ids.json").read_text(encoding="utf-8"))
         metadata = json.loads((collection_dir / "metadata.json").read_text(encoding="utf-8"))
+        vector_transform = _load_vector_transform(collection_dir)
         loaded = _StoredCollection(
             name=collection_name,
             index=index,
@@ -569,9 +578,94 @@ class CellVectorIndex:
             visualization_points=_ensure_two_dim_points(visualization_points),
             cell_id_to_offset={str(cell_id): offset for offset, cell_id in enumerate(cell_ids)},
             manifest=dict(manifest),
+            vector_transform=vector_transform,
         )
         self._collection_cache[collection_name] = loaded
         return loaded
+
+
+def _vector_transform_metadata(vector_transform: dict | None) -> dict | None:
+    if not vector_transform:
+        return None
+    return {
+        key: value
+        for key, value in vector_transform.items()
+        if key not in {"mean", "components"}
+    }
+
+
+def _persist_vector_transform(collection_dir: Path, vector_transform: dict | None) -> None:
+    if not vector_transform:
+        return
+
+    metadata = _vector_transform_metadata(vector_transform) or {}
+    arrays = {}
+    for key in ("mean", "components"):
+        if key in vector_transform and vector_transform[key] is not None:
+            arrays[key] = np.asarray(vector_transform[key], dtype=np.float32)
+
+    (collection_dir / "vector_transform.json").write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    if arrays:
+        np.savez_compressed(collection_dir / "vector_transform.npz", **arrays)
+
+
+def _load_vector_transform(collection_dir: Path) -> dict | None:
+    metadata_path = collection_dir / "vector_transform.json"
+    if not metadata_path.exists():
+        return None
+
+    vector_transform = json.loads(metadata_path.read_text(encoding="utf-8"))
+    arrays_path = collection_dir / "vector_transform.npz"
+    if arrays_path.exists():
+        with np.load(str(arrays_path), allow_pickle=False) as arrays:
+            for key in arrays.files:
+                vector_transform[key] = np.asarray(arrays[key], dtype=np.float32)
+    return vector_transform
+
+
+def _transform_query_vector_if_needed(vector: Iterable[float], collection: _StoredCollection) -> list[float]:
+    query_vector = np.asarray(list(vector), dtype=np.float32)
+    if query_vector.ndim != 1:
+        raise ValueError("query vector must be one-dimensional")
+
+    index_dim = int(collection.manifest.get("vector_dim") or collection.vectors.shape[1])
+    if len(query_vector) == index_dim:
+        return query_vector.astype(float).tolist()
+
+    vector_transform = collection.vector_transform
+    if not vector_transform:
+        raise ValueError(
+            f"vector dimension must be {index_dim}. "
+            "This index does not contain the raw-vector transform needed for high-dimensional CSV queries; "
+            "rebuild the index with the current code, or provide an already processed query vector."
+        )
+
+    input_dim = int(vector_transform.get("input_dim") or 0)
+    output_dim = int(vector_transform.get("output_dim") or index_dim)
+    if len(query_vector) != input_dim:
+        raise ValueError(
+            f"vector dimension must be {index_dim}; raw-vector transform expects {input_dim} dimensions"
+        )
+
+    transform_type = str(vector_transform.get("type") or "").strip().lower()
+    if transform_type == "slice":
+        transformed = query_vector[:output_dim]
+    elif transform_type in {"pca", "incremental_pca"}:
+        components = np.asarray(vector_transform.get("components"), dtype=np.float32)
+        mean = np.asarray(vector_transform.get("mean"), dtype=np.float32)
+        transformed = (query_vector - mean) @ components.T
+    elif transform_type == "truncated_svd":
+        components = np.asarray(vector_transform.get("components"), dtype=np.float32)
+        transformed = query_vector @ components.T
+    else:
+        raise ValueError(f"unsupported vector transform: {transform_type or 'unknown'}")
+
+    if transformed.shape[0] != index_dim:
+        raise ValueError(f"transformed query vector dimension must be {index_dim}")
+    return np.asarray(transformed, dtype=np.float32).astype(float).tolist()
 
 
 def normalize_requested_build_options(
