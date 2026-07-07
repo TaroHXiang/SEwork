@@ -7,7 +7,9 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . /app
+COPY config.py /app/config.py
+COPY faiss_service.py /app/faiss_service.py
+COPY services /app/services
 
 EXPOSE 8000
 

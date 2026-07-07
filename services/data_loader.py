@@ -7,6 +7,10 @@ import re
 import numpy as np
 import pandas as pd
 
+TARGET_INDEX_VECTOR_DIM = 30
+PCA_RANDOM_STATE = 42
+PCA_BATCH_SIZE = 512
+
 DEFAULT_METADATA_FILTER_FIELDS = [
     "cell_type",
     "disease",
@@ -124,6 +128,7 @@ class CellVectorDataset:
     source_format: str
     gene_count: int
     embedding_key: str
+    vector_transform: dict | None
 
     @property
     def vector_dim(self) -> int:
@@ -171,15 +176,18 @@ def inspect_cell_dataset(data_path: str | Path) -> dict:
         metadata_columns = [col for col in df.columns if col not in {"cell_id", *vector_columns}]
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
             row_count = max(sum(1 for _ in handle) - 1, 0)
+        raw_vector_dim = len(vector_columns)
+        vector_dim = _target_dim_for_shape(row_count, raw_vector_dim)
         return {
             "source_path": str(path),
             "format": "csv",
             "cell_count": row_count,
             "gene_count": len(vector_columns),
-            "vector_dim": len(vector_columns),
+            "vector_dim": vector_dim,
+            "original_vector_dim": raw_vector_dim,
             "columns": list(df.columns),
             "metadata_columns": metadata_columns,
-            "embedding_key": "csv_vector_columns",
+            "embedding_key": _embedding_key_with_pca_suffix("csv_vector_columns", raw_vector_dim, vector_dim),
             "visualization_source": "csv_columns_or_vector_projection",
         }
 
@@ -187,14 +195,21 @@ def inspect_cell_dataset(data_path: str | Path) -> dict:
         adata = _read_h5ad_backed(path)
         try:
             embedding_key = "X_pca" if "X_pca" in adata.obsm else "X"
-            vector_dim = int(adata.obsm["X_pca"].shape[1]) if embedding_key == "X_pca" else int(adata.n_vars)
+            raw_vector_dim = int(adata.obsm["X_pca"].shape[1]) if embedding_key == "X_pca" else int(adata.n_vars)
+            vector_dim = min(raw_vector_dim, TARGET_INDEX_VECTOR_DIM) if embedding_key == "X_pca" else _target_dim_for_shape(int(adata.n_obs), raw_vector_dim)
+            effective_embedding_key = (
+                f"X_pca[:{vector_dim}]"
+                if embedding_key == "X_pca" and raw_vector_dim > vector_dim
+                else _embedding_key_with_pca_suffix(embedding_key, raw_vector_dim, vector_dim)
+            )
             return {
                 "source_path": str(path),
                 "format": "h5ad",
                 "cell_count": int(adata.n_obs),
                 "gene_count": int(adata.n_vars),
                 "vector_dim": vector_dim,
-                "embedding_key": embedding_key,
+                "original_vector_dim": raw_vector_dim,
+                "embedding_key": effective_embedding_key,
                 "metadata_columns": list(adata.obs.columns),
                 "obsm_keys": list(adata.obsm.keys()),
             }
@@ -330,6 +345,159 @@ def _read_h5ad_backed(path: Path):
             ) from exc
 
 
+def _target_dim_for_shape(row_count: int, vector_dim: int, target_dim: int = TARGET_INDEX_VECTOR_DIM) -> int:
+    if vector_dim <= 0 or row_count <= 0:
+        return max(vector_dim, 0)
+    return min(int(target_dim), int(vector_dim), int(row_count))
+
+
+def _embedding_key_with_pca_suffix(base_key: str, raw_dim: int, vector_dim: int) -> str:
+    if raw_dim > vector_dim and vector_dim == TARGET_INDEX_VECTOR_DIM:
+        return f"{base_key}->pca{TARGET_INDEX_VECTOR_DIM}"
+    if raw_dim > vector_dim:
+        return f"{base_key}->pca{vector_dim}"
+    return base_key
+
+
+def _as_float32_matrix(matrix) -> np.ndarray:
+    if hasattr(matrix, "to_memory"):
+        matrix = matrix.to_memory()
+
+    try:
+        from scipy import sparse
+
+        if sparse.issparse(matrix):
+            return matrix.toarray().astype(np.float32, copy=False)
+    except Exception:
+        pass
+
+    array = np.asarray(matrix)
+    if array.ndim == 0 and hasattr(matrix, "toarray"):
+        array = matrix.toarray()
+    array = np.asarray(array, dtype=np.float32)
+    if array.ndim == 1:
+        array = array.reshape(-1, 1)
+    return array
+
+
+def _iter_h5ad_x_batches(adata, batch_size: int = PCA_BATCH_SIZE):
+    row_count = int(adata.n_obs)
+    for start in range(0, row_count, batch_size):
+        stop = min(start + batch_size, row_count)
+        batch = _as_float32_matrix(adata.X[start:stop])
+        yield start, stop, np.nan_to_num(batch, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _reduce_h5ad_x_for_index(adata) -> tuple[np.ndarray, str, dict | None]:
+    row_count = int(adata.n_obs)
+    raw_dim = int(adata.n_vars)
+    target_dim = _target_dim_for_shape(row_count, raw_dim)
+    if raw_dim <= target_dim:
+        return np.ascontiguousarray(_as_float32_matrix(adata.X), dtype=np.float32), "X", None
+
+    try:
+        from scipy import sparse
+        from sklearn.decomposition import TruncatedSVD
+
+        sparse_matrix = adata.X.to_memory() if hasattr(adata.X, "to_memory") else adata.X
+        if sparse.issparse(sparse_matrix):
+            sparse_matrix = sparse_matrix.astype(np.float32, copy=False)
+            svd = TruncatedSVD(n_components=target_dim, random_state=PCA_RANDOM_STATE)
+            reduced = svd.fit_transform(sparse_matrix)
+            return (
+                np.ascontiguousarray(reduced, dtype=np.float32),
+                f"X->truncated_svd{target_dim}",
+                {
+                    "type": "truncated_svd",
+                    "input_dim": raw_dim,
+                    "output_dim": target_dim,
+                    "components": np.asarray(svd.components_, dtype=np.float32),
+                },
+            )
+    except Exception as exc:
+        raise RuntimeError(
+            "h5ad does not contain obsm['X_pca']; failed to compute 30-dimensional SVD from sparse X. "
+            f"Original error: {exc}"
+        ) from exc
+
+    try:
+        from sklearn.decomposition import IncrementalPCA
+
+        batch_size = max(PCA_BATCH_SIZE, target_dim * 4)
+        pca = IncrementalPCA(n_components=target_dim, batch_size=batch_size)
+        for _, _, batch in _iter_h5ad_x_batches(adata, batch_size=batch_size):
+            if batch.shape[0] >= target_dim:
+                pca.partial_fit(batch)
+
+        reduced = np.empty((row_count, target_dim), dtype=np.float32)
+        for start, stop, batch in _iter_h5ad_x_batches(adata, batch_size=batch_size):
+            reduced[start:stop] = pca.transform(batch).astype(np.float32, copy=False)
+        return (
+            np.ascontiguousarray(reduced, dtype=np.float32),
+            f"X->incremental_pca{target_dim}",
+            {
+                "type": "pca",
+                "input_dim": raw_dim,
+                "output_dim": target_dim,
+                "mean": np.asarray(pca.mean_, dtype=np.float32),
+                "components": np.asarray(pca.components_, dtype=np.float32),
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "h5ad does not contain obsm['X_pca']; failed to compute 30-dimensional PCA from X in batches. "
+            f"Original error: {exc}"
+        ) from exc
+
+
+def _reduce_vectors_for_index(vectors: np.ndarray, base_embedding_key: str) -> tuple[np.ndarray, str, dict | None]:
+    vectors = _as_float32_matrix(vectors)
+    if vectors.ndim != 2:
+        raise ValueError("vectors must be a 2D matrix")
+    vectors = np.nan_to_num(vectors, nan=0.0, posinf=0.0, neginf=0.0)
+
+    raw_dim = int(vectors.shape[1])
+    target_dim = _target_dim_for_shape(int(vectors.shape[0]), raw_dim)
+    if raw_dim <= target_dim:
+        return np.ascontiguousarray(vectors, dtype=np.float32), base_embedding_key, None
+
+    if base_embedding_key == "X_pca":
+        reduced = vectors[:, :target_dim]
+        embedding_key = f"X_pca[:{target_dim}]"
+        vector_transform = {
+            "type": "slice",
+            "input_dim": raw_dim,
+            "output_dim": target_dim,
+        }
+    else:
+        try:
+            from sklearn.decomposition import PCA
+
+            pca = PCA(n_components=target_dim, random_state=PCA_RANDOM_STATE)
+            reduced = pca.fit_transform(vectors)
+            vector_transform = {
+                "type": "pca",
+                "input_dim": raw_dim,
+                "output_dim": target_dim,
+                "mean": np.asarray(pca.mean_, dtype=np.float32),
+                "components": np.asarray(pca.components_, dtype=np.float32),
+            }
+        except Exception:
+            centered = vectors - np.mean(vectors, axis=0, keepdims=True)
+            _, _, vt = np.linalg.svd(centered, full_matrices=False)
+            reduced = centered @ vt[:target_dim].T
+            vector_transform = {
+                "type": "pca",
+                "input_dim": raw_dim,
+                "output_dim": target_dim,
+                "mean": np.asarray(np.mean(vectors, axis=0), dtype=np.float32),
+                "components": np.asarray(vt[:target_dim], dtype=np.float32),
+            }
+        embedding_key = _embedding_key_with_pca_suffix(base_embedding_key, raw_dim, target_dim)
+
+    return np.ascontiguousarray(reduced, dtype=np.float32), embedding_key, vector_transform
+
+
 def _load_csv(path: Path) -> CellVectorDataset:
     df = pd.read_csv(path)
     if "cell_id" not in df.columns:
@@ -339,7 +507,8 @@ def _load_csv(path: Path) -> CellVectorDataset:
     if not vector_columns:
         raise ValueError("CSV must contain vector columns named v1, v2, ...")
 
-    vectors = df[vector_columns].to_numpy(dtype=np.float32)
+    raw_vectors = df[vector_columns].to_numpy(dtype=np.float32)
+    vectors, embedding_key, vector_transform = _reduce_vectors_for_index(raw_vectors, "csv_vector_columns")
     all_metadata_columns = [col for col in df.columns if col not in {"cell_id", *vector_columns}]
     resolved_fields, _ = _resolve_target_field_mapping(
         available_columns=all_metadata_columns,
@@ -369,7 +538,8 @@ def _load_csv(path: Path) -> CellVectorDataset:
         source_path=str(path),
         source_format="csv",
         gene_count=len(vector_columns),
-        embedding_key="csv_vector_columns",
+        embedding_key=embedding_key,
+        vector_transform=vector_transform,
     )
 
 
@@ -416,9 +586,10 @@ def _load_h5ad(path: Path) -> CellVectorDataset:
     try:
         embedding_key = "X_pca" if "X_pca" in adata.obsm else "X"
         if embedding_key == "X_pca":
-            vectors = np.asarray(adata.obsm["X_pca"], dtype=np.float32)
+            raw_vectors = adata.obsm["X_pca"]
+            vectors, embedding_key, vector_transform = _reduce_vectors_for_index(raw_vectors, embedding_key)
         else:
-            vectors = np.asarray(adata.X, dtype=np.float32)
+            vectors, embedding_key, vector_transform = _reduce_h5ad_x_for_index(adata)
         visualization_points, visualization_source = _resolve_h5ad_visualization_points(
             adata=adata,
             vectors=vectors,
@@ -453,6 +624,7 @@ def _load_h5ad(path: Path) -> CellVectorDataset:
             source_format="h5ad",
             gene_count=int(adata.n_vars),
             embedding_key=embedding_key,
+            vector_transform=vector_transform,
         )
     finally:
         adata.file.close()

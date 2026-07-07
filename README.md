@@ -1,8 +1,9 @@
-# 单细胞相似性检索系统
+# 单细胞相似性检索与 AI 辅助分析系统
 
-面向单细胞数据分析场景的 Web 系统。用户可以上传或指定本地单细胞数据文件，检查数据集内容，构建 FAISS 向量索引，并按细胞 ID 或向量执行 Top-K 相似检索；系统同时提供 UMAP 可视化、历史索引管理、管理员后台和 AI 索引建议能力。
+面向单细胞数据分析场景的 Web 系统。用户可以上传或指定本地单细胞数据文件，检查数据集内容，构建 FAISS 向量索引，并按细胞 ID 或向量执行 Top-K 相似检索；系统同时提供 UMAP 可视化、历史索引管理、管理员后台，以及面向单细胞场景的自然语言问答与 AI 辅助分析能力。
 
 本 README 面向实际使用本项目的用户，重点说明如何部署、登录、构建索引、执行检索以及处理常见问题。
+
 
 ## 1. 项目概览
 
@@ -15,10 +16,15 @@
 - 支持使用 `cosine`、`ip`、`l2`、`pearson` 距离度量
 - 支持按细胞 ID 检索相似细胞
 - 支持按自定义向量检索相似细胞
+- 支持自然语言查询相关细胞并返回结构化候选结果
+- 支持结合知识库解释“为什么这些细胞被召回”
+- 支持回答 marker、cell_type、疾病和组织相关问题
+- 支持生成后续分析建议，如筛选、聚类和差异表达方向
 - 支持对 ANN 检索与精确检索结果进行评估
 - 支持用户管理自己的历史索引、激活索引、删除索引
 - 支持管理员查看用户、数据集、索引、构建任务和审计日志
 - 支持 AI 助手结合当前数据集给出索引类型与参数建议
+- 支持轻量知识库检索，用于补充生物学解释和分析提示
 
 ### 1.2 系统架构
 
@@ -71,6 +77,7 @@
 - 查看检索结果和 UMAP 可视化
 - 执行 ANN vs Exact 评估
 - 使用 AI 助手咨询索引和参数选择
+- 使用自然语言直接查询细胞、查看解释证据和分析建议
 
 ### 3.2 管理员功能
 
@@ -135,27 +142,24 @@ docker compose up -d --build
 - `ann-mysql`
 - `ann-faiss`
 
-### 5.3 创建 `.env` 文件
+### 5.3 环境配置
 
-在项目根目录创建 `.env`，可参考下面的配置：
+**从示例文件配置：**
 
-```env
-DATABASE_URL=mysql+pymysql://sework:qwerxjl159357@127.0.0.1:3307/sework
-FAISS_SERVICE_URL=http://127.0.0.1:8000
-SECRET_KEY=change-this-secret
-ZHIPU_API_KEY=
-ZHIPU_MODEL=glm-4-flash-250414
-ZHIPU_API_URL=https://open.bigmodel.cn/api/paas/v4/chat/completions
+```powershell
+# 复制示例环境变量文件，然后填入真实值
+copy .env.example .env
 ```
 
-关键变量说明：
+**`.env` 关键变量说明：**
 
-- `DATABASE_URL`：Flask 主应用连接 MySQL 的地址
-- `FAISS_SERVICE_URL`：Flask 主应用连接 FAISS 服务的地址
-- `SECRET_KEY`：登录令牌签名密钥，生产或答辩环境中请务必修改
-- `ZHIPU_API_KEY`：AI 助手能力所需，可为空；为空时 AI 接口不可用
-- `ZHIPU_MODEL`：AI 模型名称
-- `ZHIPU_API_URL`：AI 服务接口地址
+- `DATABASE_URL`：Flask 主应用连接 MySQL 的地址，密码部分引用 `MYSQL_PASSWORD` 环境变量
+- `MYSQL_PASSWORD`：MySQL 容器密码，需与 `docker-compose.yml` 中的 `${MYSQL_PASSWORD}` 保持一致
+- `SECRET_KEY`：登录令牌签名密钥，生产或答辩环境中请务必修改为随机字符串
+- `ZHIPU_API_KEY`：AI 助手能力所需，可为空；为空时走规则化回退回答
+
+> ⚠️ **安全提醒**：`.env` 已加入 `.gitignore`，请勿将真实密码直接写入 `docker-compose.yml` 或其他配置文件。
+> 所有密码通过 `${VAR_NAME}` 环境变量引用，不暴露在代码仓库中。
 
 ### 5.4 安装主应用依赖
 
@@ -381,26 +385,32 @@ UMAP 查询支持部分元数据过滤条件，例如：
 
 ## 10. AI 助手说明
 
-系统提供 AI 助手，用于回答：
+系统中的 AI 能力分为两类：
 
-- HNSW、IVF、PQ 的区别
-- 距离度量如何选择
-- 参数如何设置
-- 当前数据集适合什么构建方案
+- 索引顾问：对应 `POST /api/ai/chat` 和 `POST /api/ai/index-advice`，主要基于当前数据集摘要回答 `HNSW`、`IVF`、`PQ` 的区别、距离度量选择、参数配置和构建策略建议
+- 细胞自然语言分析：对应 `POST /api/ai/cell-query`，先解析用户问题中的 `cell_type`、`disease`、`tissue` 等线索，再检索本地知识库，随后结合当前活动索引或当前候选结果召回相关细胞，最后融合“知识库证据 + 数据集证据”生成解释性回答和下一步建议
+
+换句话说，这里的 AI 是和当前数据集、知识库索引、候选细胞结果联动的一条分析链路。
 
 使用前提：
 
-- 在 `.env` 中配置 `ZHIPU_API_KEY`
+- 若要启用大模型生成回答，需要在 `.env` 中配置 `ZHIPU_API_KEY`
+- 若要启用知识库增强能力，需要先执行 `python scripts/build_knowledge_index.py` 生成离线知识索引
 
-未配置时的表现：
+未配置 `ZHIPU_API_KEY` 时的表现：
 
-- AI 接口会返回错误
-- 不影响普通检索、索引构建和管理功能
+- `POST /api/ai/chat` 和 `POST /api/ai/index-advice` 会返回未配置错误
+- `POST /api/ai/cell-query` 仍可运行，但会使用规则化回退回答，而不是调用大模型
+- 普通检索、索引构建、历史索引管理等非 AI 功能不受影响
 
 说明：
 
-- AI 助手回答内容会基于当前数据集摘要
-- 默认以中文输出
+- AI 助手默认以中文输出
+- 回答会基于当前数据集摘要，而不是脱离数据集单独生成
+- 在“细胞自然语言分析”模式下，系统会尽量区分“数据集中的直接证据”和“知识库中的辅助知识”
+- 开源发布时推荐使用 `knowledge/` 目录保存知识源说明、示例 JSONL 和离线索引产物，便于追溯与复现
+- 如果你修改了 `knowledge/source/` 或兼容旧路径 `data/kb/` 下的知识库内容，建议重新执行 `python scripts/build_knowledge_index.py`
+- 若要从开发视角理解该能力的内部实现，可查看 `RAG实现文档.md`
 
 ## 11. 管理员初始化
 
@@ -521,6 +531,7 @@ python scripts/bootstrap_admins.py
 
 - `POST /api/ai/chat`
 - `POST /api/ai/index-advice`
+- `POST /api/ai/cell-query`
 
 ### 13.6 管理员接口
 
@@ -542,15 +553,24 @@ python scripts/bootstrap_admins.py
 
 ```text
 SEwork/
+├── RAG实现文档.md                # RAG 实现说明文档
 ├── app.py                       # Flask 主应用入口
 ├── faiss_service.py             # 独立 FAISS HTTP 服务
 ├── config.py                    # 环境变量与项目配置
 ├── docker-compose.yml           # MySQL 与 FAISS 容器编排
 ├── Dockerfile.faiss             # FAISS 服务镜像构建文件
+├── .env.example                 # 环境变量示例文件（复制为 .env 后填入真实值）
 ├── requirements.txt             # Python 依赖
+├── knowledge/                  # RAG 知识库（见 RAG实现文档.md）
+│   ├── index/                  # FAISS 索引产物目录
+│   ├── source/                 # 知识源 JSONL 与来源说明
+│   └── examples/               # 扩展知识库格式示例
 ├── data/                        # 示例数据与数据说明
 ├── scripts/
-│   └── bootstrap_admins.py      # 管理员初始化脚本
+│   ├── bootstrap_admins.py        # 管理员初始化脚本
+│   ├── build_knowledge_index.py   # 构建 RAG 知识库离线索引（支持 --batch-size）
+│   ├── build_cell_marker_kb.py    # 将原始 marker 文件聚合为 JSONL 知识文件
+│   └── filter_cell_marker_kb.py   # 精简 CellMarker 知识库（推荐 CPU 环境使用）
 ├── services/
 │   ├── auth_service.py          # 用户认证与 MySQL 存储
 │   ├── admin_service.py         # 管理后台数据访问

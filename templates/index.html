@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260607-css-fix-1">
   </head>
   <body>
     <div class="site-ambience" aria-hidden="true">
@@ -89,11 +89,16 @@
               <label class="form-label" for="hubDataPath">数据路径</label>
               <input id="hubDataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
             </div>
+            <div>
+              <label class="form-label" for="hubDatasetFile">上传数据集</label>
+              <input id="hubDatasetFile" class="form-control dashboard-input" type="file" accept=".csv,.h5ad">
+            </div>
             <div class="action-row">
+              <button id="uploadDatasetBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">上传数据集</button>
               <button id="openNewDatasetBtn" type="button" class="btn btn-primary action-btn primary-btn">进入核心页面</button>
             </div>
           </div>
-          <div id="hubNewDatasetMessage" class="status-message neutral-message">支持先预览 UMAP，再构建索引。</div>
+          <div id="hubNewDatasetMessage" class="status-message neutral-message">支持上传 CSV/h5ad，构建索引时会自动将索引向量预处理到 30 维。</div>
         </section>
 
         <section id="adminPanelSection" class="panel admin-panel d-none" hidden>
@@ -478,6 +483,10 @@
                 <label class="form-label" for="dataPath">数据路径</label>
                 <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
               </div>
+              <div>
+                <label class="form-label" for="datasetFile">上传数据集</label>
+                <input id="datasetFile" class="form-control dashboard-input" type="file" accept=".csv,.h5ad">
+              </div>
               <div class="filter-grid index-config-grid">
                 <div>
                   <label class="form-label" for="indexType">Index Type</label>
@@ -529,6 +538,7 @@
                 </div>
               </div>
               <div class="action-row">
+                <button id="uploadDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">上传数据集</button>
                 <button id="inspectDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
                 <button id="buildIndexBtn" type="button" class="btn btn-primary action-btn primary-btn">构建索引</button>
               </div>
@@ -643,7 +653,8 @@
                 <div class="query-form-grid">
                   <div class="query-input-main">
                     <label class="form-label" for="queryVector">查询向量</label>
-                    <textarea id="queryVector" class="form-control dashboard-input vector-input" rows="3" placeholder="输入逗号分隔的向量，例如 0.12,0.34,0.56"></textarea>
+                    <textarea id="queryVector" class="form-control dashboard-input vector-input" rows="3" placeholder="输入 30 维向量，或选择 CSV 导入原始/30维向量"></textarea>
+                    <input id="queryVectorCsv" class="form-control dashboard-input mt-2" type="file" accept=".csv">
                   </div>
                   <div>
                     <label class="form-label" for="topKVector">Top-K</label>
@@ -867,43 +878,97 @@
     </div>
 
     <div id="aiAssistantDock" class="ai-assistant-dock d-none" hidden>
-      <button id="aiAssistantLauncher" type="button" class="ai-assistant-launcher" aria-label="打开 AI AI助手">
+      <button id="aiAssistantLauncher" type="button" class="ai-assistant-launcher" aria-label="打开 AI 助手">
         <span class="ai-assistant-launcher-badge">AI</span>
-        <span class="ai-assistant-launcher-label">AI助手</span>
+        <span class="ai-assistant-launcher-label">AI 助手</span>
       </button>
       <section id="aiAssistantPanel" class="ai-assistant-panel d-none" hidden aria-live="polite">
-        <div class="ai-assistant-header">
-          <div>
-            <h3 class="ai-assistant-title">AI </h3>
-            <p class="ai-assistant-subtitle">结合当前数据集回答索引结构、参数和构建问题</p>
-          </div>
-          <button id="aiAssistantClose" type="button" class="ai-assistant-close" aria-label="关闭 AI 助手">×</button>
-        </div>
-        <div class="ai-assistant-body">
-          <div class="ai-assistant-suggestions">
-            <div class="ai-assistant-suggestions-title">推荐问题</div>
-            <button
-              id="aiAssistantSuggestedQuestionBtn"
-              type="button"
-              class="ai-assistant-suggestion-btn"
-            >
-              请结合当前数据集，分别说明 HNSW、IVF、PQ 的优势、劣势、适用场景，并给出各自推荐的参数设置。
-            </button>
-          </div>
-          <div id="aiAssistantStatus" class="status-message neutral-message">可点击上方推荐问题，或在底部输入任意问题。</div>
-          <div id="aiAssistantMessages" class="ai-assistant-messages">
-            <div class="ai-assistant-placeholder">
-              这里会显示你和 AI 的对话内容。默认推荐问题会围绕 HNSW / IVF / PQ 的优劣和参数建议展开。
+        <div id="aiAssistantDragHandle" class="ai-assistant-header">
+          <div class="ai-assistant-brand">
+            <span class="ai-assistant-logo">SC</span>
+            <div>
+              <p class="ai-assistant-kicker">AI Cell Copilot</p>
+              <h3 class="ai-assistant-title">AI 问答助手</h3>
+              <p class="ai-assistant-subtitle">自然语言查询细胞、结果解释、知识问答与索引建议</p>
             </div>
           </div>
+          <div class="ai-assistant-window-actions">
+            <button id="aiAssistantMoveToggle" type="button" class="ai-assistant-window-btn" aria-label="切换移动模式">✥</button>
+            <button id="aiAssistantFullscreenToggle" type="button" class="ai-assistant-window-btn" aria-label="切换全屏">⛶</button>
+            <button id="aiAssistantClose" type="button" class="ai-assistant-window-btn ai-assistant-close" aria-label="关闭 AI 助手">×</button>
+          </div>
+        </div>
+        <div class="ai-assistant-body">
+          <section class="ai-assistant-hero">
+            <div class="ai-assistant-hero-copy">
+              <p id="aiAssistantHeroEyebrow" class="ai-assistant-hero-eyebrow">Hi~</p>
+              <h4 id="aiAssistantHeroTitle" class="ai-assistant-hero-title">我是单细胞 AI 助手</h4>
+              <p id="aiAssistantHeroDescription" class="ai-assistant-hero-description">
+                我会结合当前数据集、检索结果和知识库，帮助你完成从提问到解释的完整分析链路。
+              </p>
+            </div>
+            <div class="ai-assistant-hero-visual" aria-hidden="true">
+              <div class="ai-assistant-hero-orb"></div>
+              <div class="ai-assistant-hero-ring"></div>
+              <span class="ai-assistant-hero-badge">RAG + Cell</span>
+            </div>
+          </section>
+
+          <section class="ai-assistant-mode-section">
+            <div class="ai-assistant-section-header">
+              <div>
+                <p class="ai-assistant-section-kicker">问答模式</p>
+                <h5 class="ai-assistant-section-title">四种分析入口</h5>
+              </div>
+              <span class="ai-assistant-section-note">切换后会同步欢迎语和推荐问题</span>
+            </div>
+            <div id="aiAssistantModeCards" class="ai-assistant-mode-grid"></div>
+          </section>
+
+          <section class="ai-assistant-suggestions-card">
+            <div class="ai-assistant-section-header">
+              <div>
+                <p class="ai-assistant-section-kicker">推荐问题</p>
+                <h5 class="ai-assistant-section-title">从这里开始提问</h5>
+              </div>
+              <button id="aiAssistantRefreshSuggestions" type="button" class="ai-assistant-link-btn">换一批</button>
+            </div>
+            <div id="aiAssistantSuggestionsList" class="ai-assistant-suggestions-list"></div>
+          </section>
+
+          <div id="aiAssistantStatus" class="status-message neutral-message">
+            可切换模式后提问，系统会联动知识库、细胞结果和 UMAP 展示。
+          </div>
+
+          <section id="aiAssistantConversationSection" class="ai-assistant-conversation">
+            <div class="ai-assistant-conversation-header">
+              <div>
+                <p class="ai-assistant-section-kicker">对话区</p>
+                <h5 class="ai-assistant-section-title">我和 AI 的问答</h5>
+              </div>
+              <button id="aiAssistantConversationToggle" type="button" class="ai-assistant-link-btn" aria-label="展开对话区">展开对话区</button>
+            </div>
+            <div id="aiAssistantMessages" class="ai-assistant-messages">
+              <div class="ai-assistant-placeholder">
+                这里会显示你和 AI 的对话内容，并在命中细胞结果时自动更新右侧结果表和 UMAP 高亮。
+              </div>
+            </div>
+          </section>
+
           <div class="ai-assistant-composer">
             <textarea
               id="aiAssistantInput"
               class="form-control dashboard-input ai-assistant-input"
-              rows="3"
+              rows="4"
               placeholder="请输入你的问题，Ctrl + Enter 发送"
             ></textarea>
-            <button id="aiAssistantSendBtn" type="button" class="btn action-btn primary-btn ai-assistant-send-btn">发送</button>
+            <div class="ai-assistant-composer-footer">
+              <p class="ai-assistant-disclaimer">由 AI 助手提供服务，回答仅供参考。</p>
+              <div class="ai-assistant-composer-actions">
+                <button id="aiAssistantRegenerateBtn" type="button" class="btn ai-assistant-secondary-btn">重新生成</button>
+                <button id="aiAssistantSendBtn" type="button" class="btn action-btn primary-btn ai-assistant-send-btn">发送</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1025,6 +1090,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=umap-export-client-3"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260607-query-csv-1"></script>
   </body>
 </html>
