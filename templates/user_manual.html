@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>用户手册 - 单细胞相似性检索系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <div class="docs-shell">
+      <header class="docs-hero">
+        <div>
+          <p class="docs-kicker">User Manual</p>
+          <h1 class="docs-title">单细胞相似性检索系统用户手册</h1>
+          <p class="docs-lead">本手册面向普通使用者，重点说明如何登录系统、检查数据集、构建索引、执行相似检索以及查看可视化结果。</p>
+        </div>
+        <div class="docs-actions">
+          <a href="{{ url_for('home') }}" class="btn action-btn secondary-btn">返回系统首页</a>
+          <a href="{{ url_for('admin_manual') }}" class="btn action-btn secondary-btn">查看管理员手册</a>
+        </div>
+      </header>
+
+      <main class="docs-grid">
+        <aside class="docs-toc">
+          <h2 class="docs-toc-title">目录</h2>
+          <a href="#overview" class="docs-toc-link">1. 系统概览</a>
+          <a href="#login" class="docs-toc-link">2. 登录与入口</a>
+          <a href="#dataset" class="docs-toc-link">3. 数据准备</a>
+          <a href="#build" class="docs-toc-link">4. 索引构建</a>
+          <a href="#search" class="docs-toc-link">5. 相似检索</a>
+          <a href="#visualization" class="docs-toc-link">6. 可视化结果</a>
+          <a href="#history" class="docs-toc-link">7. 历史索引管理</a>
+          <a href="#ai" class="docs-toc-link">8. AI 助手</a>
+          <a href="#faq" class="docs-toc-link">9. 常见问题</a>
+        </aside>
+
+        <section class="docs-content">
+          <article id="overview" class="docs-section">
+            <h2>1. 系统概览</h2>
+            <p>系统用于对单细胞数据进行向量化相似检索。你可以输入数据文件路径，先检查数据内容，再根据场景构建 FAISS 索引，最后按细胞 ID 或向量检索相似细胞。</p>
+            <div class="docs-card-grid">
+              <section class="docs-card">
+                <h3>你可以完成的事情</h3>
+                <ul>
+                  <li>检查数据集规模、向量维度和元数据字段</li>
+                  <li>查看 UMAP 预览、统计分布和细胞详情</li>
+                  <li>构建 HNSW、IVF、PQ 三类索引</li>
+                  <li>按细胞 ID 或向量执行 Top-K 检索</li>
+                  <li>用元数据条件过滤检索范围</li>
+                </ul>
+              </section>
+              <section class="docs-card">
+                <h3>使用前提</h3>
+                <ul>
+                  <li>项目服务已由部署者启动</li>
+                  <li>你已获取普通用户账号，或可自行注册</li>
+                  <li>数据文件使用 `.csv` 或 `.h5ad` 格式</li>
+                  <li>数据路径对系统和 FAISS 服务均可访问</li>
+                </ul>
+              </section>
+            </div>
+          </article>
+
+          <article id="login" class="docs-section">
+            <h2>2. 登录与入口</h2>
+            <ol>
+              <li>打开系统首页。</li>
+              <li>输入账号和密码。</li>
+              <li>如无账号，可先注册普通用户。</li>
+              <li>登录后进入“数据集入口”页面。</li>
+            </ol>
+            <p>登录后你会看到两类入口：</p>
+            <ul>
+              <li><strong>我的历史索引</strong>：进入你以前构建过的索引</li>
+              <li><strong>录入新数据集</strong>：从新的数据文件开始分析流程</li>
+            </ul>
+            <p>如果当前账号具有管理员角色，页面上还会额外显示管理员工作台入口，但普通分析流程不受影响。</p>
+          </article>
+
+          <article id="dataset" class="docs-section">
+            <h2>3. 数据准备</h2>
+            <h3>3.1 支持的数据格式</h3>
+            <ul>
+              <li><code>.csv</code></li>
+              <li><code>.h5ad</code></li>
+            </ul>
+            <h3>3.2 CSV 基本要求</h3>
+            <ul>
+              <li>必须包含 <code>cell_id</code> 列</li>
+              <li>所有向量列必须以 <code>v</code> 开头，例如 <code>v1</code>、<code>v2</code></li>
+              <li>其他列会被当作元数据</li>
+            </ul>
+            <h3>3.3 H5AD 基本要求</h3>
+            <ul>
+              <li>细胞 ID 来自 <code>obs_names</code></li>
+              <li>系统优先读取 <code>obsm["X_pca"]</code> 作为向量</li>
+              <li>若无 <code>X_pca</code>，系统会尝试使用 <code>X</code></li>
+            </ul>
+            <h3>3.4 推荐操作</h3>
+            <ol>
+              <li>先在历史页输入数据路径。</li>
+              <li>进入核心页面后点击“检查数据”。</li>
+              <li>确认数据集摘要、向量维度和可用元数据无误。</li>
+              <li>再决定是否构建索引。</li>
+            </ol>
+          </article>
+
+          <article id="build" class="docs-section">
+            <h2>4. 索引构建</h2>
+            <p>系统支持以下索引类型：</p>
+            <ul>
+              <li><strong>HNSW</strong>：召回率通常较高，查询速度快，适合中小到中大型数据集</li>
+              <li><strong>IVF</strong>：适合更大规模数据，可通过 <code>NList</code> 和 <code>NProbe</code> 平衡速度与召回</li>
+              <li><strong>PQ</strong>：压缩率高，适合内存敏感场景，但精度可能下降</li>
+            </ul>
+            <p>常见配置项：</p>
+            <ul>
+              <li><code>Distance Metric</code>：选择相似度度量方式</li>
+              <li><code>HNSW M / EF Construct / EF Search</code></li>
+              <li><code>IVF NList / NProbe</code></li>
+              <li><code>PQ Compression</code></li>
+            </ul>
+            <div class="docs-note">
+              构建大数据集时，建议使用异步构建。这样系统会在后台执行任务，并在页面中持续刷新进度。
+            </div>
+          </article>
+
+          <article id="search" class="docs-section">
+            <h2>5. 相似检索</h2>
+            <h3>5.1 按 ID 查询</h3>
+            <ul>
+              <li>输入一个已存在的细胞 ID</li>
+              <li>设置 <code>Top-K</code></li>
+              <li>点击“开始查询”</li>
+            </ul>
+            <h3>5.2 按向量查询</h3>
+            <ul>
+              <li>输入逗号分隔的向量</li>
+              <li>设置 <code>Top-K</code></li>
+              <li>点击“开始查询”</li>
+            </ul>
+            <h3>5.3 元数据过滤</h3>
+            <p>你可以在查询前先设置过滤条件，例如：</p>
+            <ul>
+              <li>细胞类型</li>
+              <li>疾病状态</li>
+              <li>年龄组</li>
+              <li>性别</li>
+              <li>组织来源</li>
+              <li>捐赠者 ID</li>
+            </ul>
+            <h3>5.4 检索评估</h3>
+            <p>打开 <code>Enable ANN vs Exact evaluation</code> 后，系统会展示 ANN 与精确检索的对比指标，用于分析检索效果。</p>
+          </article>
+
+          <article id="visualization" class="docs-section">
+            <h2>6. 可视化结果</h2>
+            <p>结果展示区会联动呈现以下内容：</p>
+            <ul>
+              <li>数据集概览摘要</li>
+              <li>细胞类型分布统计</li>
+              <li>样本来源分布统计</li>
+              <li>数据质量统计</li>
+              <li>UMAP 散点图</li>
+              <li>检索结果表格</li>
+              <li>单个细胞详情</li>
+            </ul>
+            <p>UMAP 区支持预览层级切换、颜色模式切换、结果高亮和导出 CSV/JSON。</p>
+          </article>
+
+          <article id="history" class="docs-section">
+            <h2>7. 历史索引管理</h2>
+            <ul>
+              <li>在历史页查看你已经构建过的索引</li>
+              <li>点击卡片直接进入对应数据集页面</li>
+              <li>切换激活索引后，再执行查询</li>
+              <li>不再使用的索引可以删除</li>
+            </ul>
+          </article>
+
+          <article id="ai" class="docs-section">
+            <h2>8. AI 助手</h2>
+            <p>AI 助手会结合当前数据集，帮助你理解不同索引类型的特点和参数选择逻辑。适合用来回答：</p>
+            <ul>
+              <li>当前数据集更适合 HNSW、IVF 还是 PQ</li>
+              <li>距离度量该如何选择</li>
+              <li>如何平衡速度、召回和内存</li>
+            </ul>
+            <div class="docs-note">
+              如果系统未配置 AI 服务密钥，AI 助手入口可能存在但无法正常返回答案，这不会影响普通检索流程。
+            </div>
+          </article>
+
+          <article id="faq" class="docs-section">
+            <h2>9. 常见问题</h2>
+            <h3>9.1 检查数据时报错“找不到文件”</h3>
+            <p>请确认数据路径是否正确，并确保该路径对系统运行环境可访问。</p>
+            <h3>9.2 构建索引失败</h3>
+            <p>优先联系部署者检查 FAISS 服务是否已启动，以及数据文件是否被容器正确挂载。</p>
+            <h3>9.3 查询结果为空</h3>
+            <p>请检查是否已成功激活索引，以及当前过滤条件是否过于严格。</p>
+            <h3>9.4 无法使用管理员功能</h3>
+            <p>管理员功能需要管理员或超级管理员账号；普通用户不会显示相应操作入口。</p>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -4,151 +4,840 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>单细胞相似性检索系统</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260607-css-fix-1">
   </head>
   <body>
-    <nav class="navbar navbar-expand-lg border-bottom bg-white">
-      <div class="container">
-        <span class="navbar-brand fw-semibold">单细胞相似性检索系统</span>
-        <span id="healthBadge" class="badge text-bg-secondary">未构建索引</span>
+    <div class="site-ambience" aria-hidden="true">
+      <span class="ambient-orb orb-cyan"></span>
+      <span class="ambient-orb orb-blue"></span>
+      <span class="ambient-orb orb-gold"></span>
+      <span class="ambient-grid"></span>
+      <span class="ambient-noise"></span>
+    </div>
+    <div id="authView" class="auth-wrapper">
+      <div class="auth-card">
+        <p class="auth-kicker">Single-Cell Similarity Retrieval Workspace</p>
+        <h2 class="auth-title">系统登录</h2>
+        <p class="auth-subtitle">登录后访问单细胞相似性检索控制台</p>
+
+        <div class="auth-form-group">
+          <label class="form-label" for="authUsername">账号</label>
+          <input id="authUsername" class="form-control dashboard-input" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="请输入账号">
+        </div>
+
+        <div class="auth-form-group">
+          <label class="form-label" for="authPassword">密码</label>
+          <input id="authPassword" class="form-control dashboard-input" type="password" autocomplete="new-password" placeholder="至少 6 位">
+        </div>
+
+        <div class="auth-form-group mb-4">
+          <label class="form-label d-block">注册说明</label>
+          <div class="status-message neutral-message mb-0">
+            当前页面仅开放普通用户注册。管理员账号由项目团队统一创建与分发，不提供自助注册入口。
+          </div>
+        </div>
+
+        <div id="authMessage" class="status-message neutral-message d-none mb-3"></div>
+
+        <div class="auth-actions">
+          <button id="loginBtn" type="button" onclick="window.__seworkLogin && window.__seworkLogin()" class="btn btn-primary action-btn primary-btn flex-fill">登录</button>
+          <button id="registerBtn" type="button" onclick="window.__seworkRegister && window.__seworkRegister()" class="btn btn-outline-light action-btn secondary-btn flex-fill">注册</button>
+        </div>
+        <p class="auth-footnote">面向单细胞数据读取、ANN 索引构建、相似检索与结果可视化的一体化工作台。</p>
       </div>
-    </nav>
+    </div>
 
-    <main class="container py-4">
-      <section class="workflow mb-4">
-        <div class="workflow-step">读取 h5ad 数据</div>
-        <div class="workflow-step">提取 X_pca 向量</div>
-        <div class="workflow-step">构建 HNSW 索引</div>
-        <div class="workflow-step">Top-K 相似检索</div>
-        <div class="workflow-step">结果与指标展示</div>
-      </section>
-
-      <section class="panel auth-panel mb-4">
-        <div class="row g-3 align-items-end">
-          <div class="col-lg-3 col-md-6">
-            <label class="form-label" for="authUsername">账号</label>
-            <input id="authUsername" class="form-control" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="请输入账号">
-          </div>
-          <div class="col-lg-3 col-md-6">
-            <label class="form-label" for="authPassword">密码</label>
-            <input id="authPassword" class="form-control" type="password" autocomplete="new-password" placeholder="至少 6 位">
-          </div>
-          <div class="col-lg-3 col-md-6">
-            <label class="form-label d-block">注册身份</label>
-            <div class="btn-group w-100" role="group" aria-label="注册身份">
-              <input type="radio" class="btn-check" name="authRole" id="roleUser" value="user" checked>
-              <label class="btn btn-outline-secondary" for="roleUser">普通用户</label>
-              <input type="radio" class="btn-check" name="authRole" id="roleAdmin" value="admin">
-              <label class="btn btn-outline-secondary" for="roleAdmin">管理员</label>
-            </div>
-          </div>
-          <div class="col-lg-3 col-md-6">
-            <div class="d-grid gap-2 d-md-flex">
-              <button id="registerBtn" class="btn btn-outline-primary flex-fill">注册</button>
-              <button id="loginBtn" class="btn btn-primary flex-fill">登录</button>
-              <button id="logoutBtn" class="btn btn-outline-secondary flex-fill" disabled>退出</button>
-            </div>
+    <div id="hubView" class="app-shell d-none" hidden>
+      <header class="topbar">
+        <div class="topbar-copy">
+          <h1 class="page-title">单细胞相似性检索系统</h1>
+          <div class="topbar-status">
+            <span class="status-badge is-idle">数据集入口</span>
+            <span class="status-note">选择历史索引或录入新数据集进入核心页面</span>
           </div>
         </div>
-        <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
-          <span id="authStatus" class="small text-secondary">未登录</span>
-          <button id="loadUsersBtn" class="btn btn-sm btn-outline-dark d-none" disabled>用户管理</button>
+        <div class="topbar-actions">
+          <span id="hubAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
+          <a id="hubUserManualLink" href="{{ url_for('user_manual') }}" target="_blank" rel="noopener" class="action-link">用户手册</a>
+          <a id="hubAdminManualLink" href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link d-none" hidden>管理员手册</a>
+          <span id="hubCurrentUserLabel" class="user-label">--</span>
+          <button id="hubLogoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
         </div>
-        <div id="userList" class="user-list mt-3 d-none"></div>
-      </section>
+      </header>
 
-      <div class="row g-4">
-        <section class="col-lg-4">
-          <div class="panel mb-4">
-            <h1 class="h5 mb-3">数据集与索引</h1>
-            <label class="form-label" for="dataPath">数据路径</label>
-            <input id="dataPath" class="form-control" value="liver.h5ad">
-            <div class="d-grid gap-2 mt-3">
-              <button id="inspectDataBtn" class="btn btn-outline-secondary">检查数据</button>
-              <button id="buildIndexBtn" class="btn btn-primary">构建索引</button>
-            </div>
-            <div id="indexStatus" class="small text-secondary mt-3">等待构建</div>
+      <main class="dashboard-main">
+        <section class="panel">
+          <div class="panel-heading">
+            <h2 class="panel-title">我的历史索引</h2>
+            <p class="panel-description">每张卡片对应一个你构建过的索引，点击后直接进入该数据集页面。</p>
           </div>
-
-          <div class="panel">
-            <h2 class="h6 mb-3">数据集信息</h2>
-            <dl id="datasetInfo" class="dataset-info mb-0">
-              <dt>状态</dt>
-              <dd>未加载</dd>
-            </dl>
-          </div>
+          <div id="hubHistoryMessage" class="status-message neutral-message">正在加载历史索引...</div>
+          <div id="historyCards" class="history-card-grid"></div>
         </section>
 
-        <section class="col-lg-8">
-          <div class="panel">
-            <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+        <section class="panel">
+          <div class="panel-heading">
+            <h2 class="panel-title">录入新数据集</h2>
+            <p class="panel-description">输入数据路径后进入核心页面，先查看 UMAP，再决定是否构建索引。</p>
+          </div>
+          <div class="field-stack">
+            <div>
+              <label class="form-label" for="hubDataPath">数据路径</label>
+              <input id="hubDataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
+            </div>
+            <div>
+              <label class="form-label" for="hubDatasetFile">上传数据集</label>
+              <input id="hubDatasetFile" class="form-control dashboard-input" type="file" accept=".csv,.h5ad">
+            </div>
+            <div class="action-row">
+              <button id="uploadDatasetBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">上传数据集</button>
+              <button id="openNewDatasetBtn" type="button" class="btn btn-primary action-btn primary-btn">进入核心页面</button>
+            </div>
+          </div>
+          <div id="hubNewDatasetMessage" class="status-message neutral-message">支持上传 CSV/h5ad，构建索引时会自动将索引向量预处理到 30 维。</div>
+        </section>
+
+        <section id="adminPanelSection" class="panel admin-panel d-none" hidden>
+          <div class="panel-heading">
+            <h2 class="panel-title">Admin Dashboard</h2>
+            <p class="panel-description">管理员在此统一监管用户、数据集、索引、构建任务与审计日志。</p>
+          </div>
+
+          <div class="admin-summary-grid">
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">用户总数</span>
+              <strong id="adminUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">启用账号</span>
+              <strong id="adminActiveUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">停用账号</span>
+              <strong id="adminDisabledUserCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">数据集总数</span>
+              <strong id="adminDatasetCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">索引总数</span>
+              <strong id="adminIndexCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">失败任务</span>
+              <strong id="adminFailedJobCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">管理员数量</span>
+              <strong id="adminAdminCount" class="admin-summary-value">0</strong>
+            </article>
+            <article class="admin-summary-card">
+              <span class="admin-summary-label">进行中任务</span>
+              <strong id="adminInProgressJobCount" class="admin-summary-value">0</strong>
+            </article>
+          </div>
+
+          <div class="admin-toolbar">
+            <div class="admin-tabs" id="adminTabs">
+              <button type="button" class="btn action-btn secondary-btn btn-sm is-active" data-admin-tab="overview">总览</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="users">用户</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="datasets">数据集</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="indexes">索引</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="jobs">任务</button>
+              <button type="button" class="btn action-btn secondary-btn btn-sm" data-admin-tab="audit">审计</button>
+            </div>
+            <div class="admin-toolbar-actions">
+              <a href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link action-link-strong">管理员手册</a>
+              <button id="adminRefreshDashboardBtn" type="button" class="btn action-btn secondary-btn btn-sm">刷新工作台</button>
+            </div>
+          </div>
+
+          <div id="adminMessage" class="status-message neutral-message">管理员工作台初始化中...</div>
+
+          <div id="adminOverviewTab" class="admin-tab-panel is-active">
+            <div class="admin-overview-grid">
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">索引类型分布</h3>
+                </div>
+                <div id="adminIndexTypeChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">距离度量分布</h3>
+                </div>
+                <div id="adminMetricChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">构建任务趋势</h3>
+                </div>
+                <div id="adminBuildTrendChart" class="admin-chart"></div>
+              </section>
+              <section class="subpanel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">用户索引 Top 10</h3>
+                </div>
+                <div id="adminTopUsersChart" class="admin-chart"></div>
+              </section>
+            </div>
+          </div>
+
+          <div id="adminUsersTab" class="admin-tab-panel">
+            <div class="admin-grid admin-grid-wide">
+              <section class="subpanel admin-create-panel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">创建用户</h3>
+                  <span class="subpanel-tag">Admin</span>
+                </div>
+                <div class="admin-form-grid">
+                  <div>
+                    <label class="form-label" for="adminCreateUsername">账号</label>
+                    <input id="adminCreateUsername" class="form-control dashboard-input" placeholder="请输入新账号">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateDisplayName">显示名</label>
+                    <input id="adminCreateDisplayName" class="form-control dashboard-input" placeholder="可选">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateEmail">邮箱</label>
+                    <input id="adminCreateEmail" class="form-control dashboard-input" placeholder="可选">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreatePassword">密码</label>
+                    <input id="adminCreatePassword" type="password" class="form-control dashboard-input" placeholder="至少 6 位">
+                  </div>
+                  <div>
+                    <label class="form-label" for="adminCreateRole">角色</label>
+                    <select id="adminCreateRole" class="form-select dashboard-input">
+                      <option value="user">普通用户</option>
+                      <option value="admin">管理员</option>
+                    </select>
+                  </div>
+                  <div class="admin-create-submit">
+                    <button id="adminCreateUserBtn" type="button" class="btn btn-primary action-btn primary-btn w-100">创建用户</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="subpanel admin-users-panel">
+                <div class="subpanel-title-row">
+                  <h3 class="subpanel-title">用户管理</h3>
+                  <div class="admin-panel-actions">
+                    <span id="adminUsersHint" class="subpanel-tag">同步中</span>
+                  </div>
+                </div>
+                <div class="table-shell admin-table-shell">
+                  <div class="table-responsive">
+                    <table class="table results-table align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>ID</th>
+                          <th>账号</th>
+                          <th>显示名</th>
+                          <th>角色</th>
+                          <th>状态</th>
+                          <th>最近登录</th>
+                          <th>数据集</th>
+                          <th>索引</th>
+                          <th>最近任务</th>
+                          <th>操作</th>
+                        </tr>
+                      </thead>
+                      <tbody id="adminUsersBody">
+                        <tr>
+                          <td colspan="10" class="table-state">管理员列表尚未加载</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <section class="subpanel admin-detail-panel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">用户详情</h3>
+                <span id="adminUserDetailHint" class="subpanel-tag">未选择用户</span>
+              </div>
+              <div id="adminUserDetailMeta" class="admin-detail-meta table-state">点击上方“详情”查看该用户的数据集、索引和任务情况。</div>
+              <div class="admin-detail-grid">
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">索引类型分布</h4>
+                  <div id="adminUserDetailChart" class="admin-chart admin-chart-sm"></div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">数据集</h4>
+                  <div id="adminUserDatasetsList" class="admin-detail-list table-state">--</div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">索引</h4>
+                  <div id="adminUserIndexesList" class="admin-detail-list table-state">--</div>
+                </div>
+                <div class="admin-detail-card">
+                  <h4 class="admin-detail-title">最近任务</h4>
+                  <div id="adminUserJobsList" class="admin-detail-list table-state">--</div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminDatasetsTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">数据集管理</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>路径</th>
+                        <th>格式</th>
+                        <th>Cells</th>
+                        <th>Vector Dim</th>
+                        <th>状态</th>
+                        <th>关联索引</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminDatasetsBody">
+                      <tr>
+                        <td colspan="10" class="table-state">数据集列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminIndexesTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">索引管理</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>索引名</th>
+                        <th>类型</th>
+                        <th>距离</th>
+                        <th>构建参数</th>
+                        <th>状态</th>
+                        <th>更新时间</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminIndexesBody">
+                      <tr>
+                        <td colspan="10" class="table-state">索引列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminJobsTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">构建任务监管</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Job ID</th>
+                        <th>所属用户</th>
+                        <th>数据集</th>
+                        <th>索引名</th>
+                        <th>状态</th>
+                        <th>阶段</th>
+                        <th>更新时间</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminBuildJobsBody">
+                      <tr>
+                        <td colspan="7" class="table-state">任务列表尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="adminAuditTab" class="admin-tab-panel">
+            <section class="subpanel">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">审计日志</h3>
+              </div>
+              <div class="table-shell admin-table-shell">
+                <div class="table-responsive">
+                  <table class="table results-table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>操作人</th>
+                        <th>角色</th>
+                        <th>动作</th>
+                        <th>目标</th>
+                        <th>详情</th>
+                      </tr>
+                    </thead>
+                    <tbody id="adminAuditLogsBody">
+                      <tr>
+                        <td colspan="6" class="table-state">审计日志尚未加载</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="mainView" class="app-shell d-none" hidden>
+      <header class="topbar">
+        <div class="topbar-copy">
+          <h1 class="page-title">单细胞相似性检索系统</h1>
+          <div class="topbar-status">
+            <span id="healthBadge" class="status-badge is-idle">未构建索引</span>
+            <span id="healthText" class="status-note">页面初始化后自动检查系统状态</span>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="mainAdminBadge" class="admin-mode-badge d-none" hidden>管理员模式</span>
+          <button id="backToHubBtn" type="button" class="btn action-btn secondary-btn btn-sm">返回历史页</button>
+          <span id="currentDatasetLabel" class="user-label">--</span>
+          <a id="mainUserManualLink" href="{{ url_for('user_manual') }}" target="_blank" rel="noopener" class="action-link">帮助文档</a>
+          <a id="mainAdminManualLink" href="{{ url_for('admin_manual') }}" target="_blank" rel="noopener" class="action-link d-none" hidden>管理员手册</a>
+          <span id="currentUserLabel" class="user-label">--</span>
+          <button id="logoutBtn" type="button" class="btn action-btn secondary-btn btn-sm">退出登录</button>
+        </div>
+      </header>
+
+      <main class="dashboard-main">
+        <section class="main-grid">
+          <aside class="panel dataset-panel">
+            <div class="panel-heading">
+              <div class="panel-title-row">
+                <h2 class="panel-title">数据集与索引</h2>
+                <div class="context-help">
+                  <button type="button" id="contextHelpTrigger" class="context-help-trigger" aria-label="查看索引与参数说明">?</button>
+                  <div id="contextHelpTemplate" class="context-help-card" hidden>
+                    <div class="context-help-section">
+                      <strong>索引类型</strong>
+                      <ul>
+                        <li><b>HNSW</b>：召回高、查询快，适合中小到中大规模数据，内存占用相对更高。</li>
+                        <li><b>IVF</b>：先聚类再检索，适合更大规模数据，速度和召回可通过参数平衡。</li>
+                        <li><b>PQ</b>：压缩最强，适合内存敏感或超大规模数据，但精度可能下降。</li>
+                      </ul>
+                    </div>
+                    <div class="context-help-section">
+                      <strong>距离度量</strong>
+                      <ul>
+                        <li><b>Cosine</b>：最常用，关注方向相似性。</li>
+                        <li><b>Dot(IP)</b>：适合向量模长也有意义的场景。</li>
+                        <li><b>Euclid(L2)</b>：适合绝对距离有意义的场景。</li>
+                        <li><b>Pearson</b>：更关注变化趋势相关性。</li>
+                      </ul>
+                    </div>
+                    <div class="context-help-section">
+                      <strong>关键参数</strong>
+                      <ul>
+                        <li><b>HNSW M</b>：图连接度，越大通常召回更高，但更耗内存。</li>
+                        <li><b>HNSW EF Construct</b>：建图搜索宽度，越大构建更慢但图质量更好。</li>
+                        <li><b>HNSW EF Search</b>：查询搜索宽度，越大召回更高但查询更慢。</li>
+                        <li><b>IVF NList</b>：聚类桶数量，越大分桶更细但训练更重。</li>
+                        <li><b>IVF NProbe</b>：查询扫描桶数，越大召回更高但更慢。</li>
+                        <li><b>PQ Compression</b>：压缩倍率，越大越省内存，但精度可能越低。</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <p class="panel-description">检查数据可用性、构建 FAISS 索引，并管理当前查询上下文。</p>
+            </div>
+
+            <div class="field-stack">
               <div>
-                <h2 class="h5 mb-1">相似细胞查询</h2>
-                <div id="queryStatus" class="small text-secondary">输入细胞 ID 或 30 维向量进行 Top-K 检索</div>
+                <label class="form-label" for="dataPath">数据路径</label>
+                <input id="dataPath" class="form-control dashboard-input" value="data/liver.h5ad" placeholder="请输入 CSV 或 h5ad 路径">
+              </div>
+              <div>
+                <label class="form-label" for="datasetFile">上传数据集</label>
+                <input id="datasetFile" class="form-control dashboard-input" type="file" accept=".csv,.h5ad">
+              </div>
+              <div class="filter-grid index-config-grid">
+                <div>
+                  <label class="form-label" for="indexType">Index Type</label>
+                  <select id="indexType" class="form-select dashboard-input">
+                    <option value="hnsw">HNSW</option>
+                    <option value="ivf">IVF</option>
+                    <option value="pq">PQ</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" for="distanceMetric">Distance Metric</label>
+                  <select id="distanceMetric" class="form-select dashboard-input">
+                    <option value="cosine">Cosine</option>
+                    <option value="ip">Inner Product</option>
+                    <option value="l2">L2</option>
+                    <option value="pearson">Pearson</option>
+                  </select>
+                </div>
+              </div>
+              <div class="filter-grid index-config-grid">
+                <div id="hnswMField">
+                  <label class="form-label" for="hnswM">HNSW M</label>
+                  <input id="hnswM" class="form-control dashboard-input" type="number" min="4" max="128" value="16">
+                </div>
+                <div id="hnswEfConstructField">
+                  <label class="form-label" for="hnswEfConstruct">HNSW EF Construct</label>
+                  <input id="hnswEfConstruct" class="form-control dashboard-input" type="number" min="16" max="4096" value="128">
+                </div>
+                <div id="hnswEfSearchField">
+                  <label class="form-label" for="hnswEfSearch">HNSW EF Search</label>
+                  <input id="hnswEfSearch" class="form-control dashboard-input" type="number" min="16" max="4096" value="128">
+                </div>
+                <div id="ivfNlistField" class="d-none">
+                  <label class="form-label" for="ivfNlist">IVF NList</label>
+                  <input id="ivfNlist" class="form-control dashboard-input" type="number" min="1" placeholder="Auto">
+                </div>
+                <div id="ivfNprobeField" class="d-none">
+                  <label class="form-label" for="ivfNprobe">IVF NProbe</label>
+                  <input id="ivfNprobe" class="form-control dashboard-input" type="number" min="1" value="8">
+                </div>
+                <div id="pqCompressionField" class="d-none">
+                  <label class="form-label" for="pqCompression">PQ Compression</label>
+                  <select id="pqCompression" class="form-select dashboard-input">
+                    <option value="x8">x8</option>
+                    <option value="x16" selected>x16</option>
+                    <option value="x32">x32</option>
+                    <option value="x64">x64</option>
+                  </select>
+                </div>
+              </div>
+              <div class="action-row">
+                <button id="uploadDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">上传数据集</button>
+                <button id="inspectDataBtn" type="button" class="btn btn-outline-light action-btn secondary-btn">检查数据</button>
+                <button id="buildIndexBtn" type="button" class="btn btn-primary action-btn primary-btn">构建索引</button>
               </div>
             </div>
 
-            <div class="row g-3 mb-3">
-              <div class="col-md-4">
+            <div id="indexStatus" class="status-message neutral-message">等待构建</div>
+            <div id="indexBuildProgress" class="index-build-progress d-none" aria-live="polite">
+              <div class="index-progress-header-row">
+                <strong id="indexBuildStageLabel" class="index-progress-stage">任务状态</strong>
+              </div>
+              <div class="progress index-progress-shell">
+                <div
+                  id="indexBuildProgressBar"
+                  class="progress-bar index-progress-bar"
+                  role="progressbar"
+                  style="width: 100%"
+                >未处理完成</div>
+              </div>
+              <div id="indexBuildProgressMeta" class="index-progress-meta"></div>
+            </div>
+
+            <section class="subpanel mt-4">
+              <div class="subpanel-title-row">
+                <h3 class="subpanel-title">数据集摘要</h3>
+                <span class="subpanel-tag">Inspect</span>
+              </div>
+              <dl id="datasetInfo" class="dataset-info">
+                <dt>状态</dt><dd>未加载</dd>
+              </dl>
+            </section>
+          </aside>
+
+          <section class="panel query-panel">
+            <div class="panel-heading">
+              <h2 class="panel-title">相似细胞查询</h2>
+              <p class="panel-description">支持按细胞 ID 或向量进行 Top-K 检索，并结合元数据下拉筛选。</p>
+            </div>
+
+            <div class="filter-grid">
+              <div>
                 <label class="form-label" for="filterCellType">细胞类型过滤</label>
-                <input id="filterCellType" class="form-control" placeholder="如 T cell">
+                <select id="filterCellType" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
-              <div class="col-md-4">
+              <div>
                 <label class="form-label" for="filterDisease">疾病过滤</label>
-                <input id="filterDisease" class="form-control" placeholder="可选">
+                <select id="filterDisease" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
-              <div class="col-md-4">
+              <div>
                 <label class="form-label" for="filterAgeGroup">年龄组过滤</label>
-                <input id="filterAgeGroup" class="form-control" placeholder="可选">
+                <select id="filterAgeGroup" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterSex">性别过滤</label>
+                <select id="filterSex" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterTissue">组织过滤</label>
+                <select id="filterTissue" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="filterDonorId">捐赠者ID过滤</label>
+                <select id="filterDonorId" class="form-select dashboard-input">
+                  <option value="">全部</option>
+                </select>
               </div>
             </div>
 
-            <ul class="nav nav-tabs" id="queryTabs" role="tablist">
+            <div class="d-flex align-items-center justify-content-between mt-3 evaluation-row">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch" id="evaluateToggle">
+                <label class="form-check-label" for="evaluateToggle">Enable ANN vs Exact evaluation</label>
+              </div>
+            </div>
+
+<ul class="nav query-tabs" id="queryTabs" role="tablist">
               <li class="nav-item" role="presentation">
-                <button class="nav-link active" id="id-tab" data-bs-toggle="tab" data-bs-target="#id-pane" type="button" role="tab">细胞 ID</button>
+                <button class="nav-link active" id="id-tab" data-bs-toggle="tab" data-bs-target="#id-pane" type="button" role="tab" aria-controls="id-pane" aria-selected="true">按 ID 查询</button>
               </li>
               <li class="nav-item" role="presentation">
-                <button class="nav-link" id="vector-tab" data-bs-toggle="tab" data-bs-target="#vector-pane" type="button" role="tab">向量</button>
+                <button class="nav-link" id="vector-tab" data-bs-toggle="tab" data-bs-target="#vector-pane" type="button" role="tab" aria-controls="vector-pane" aria-selected="false">按向量查询</button>
               </li>
             </ul>
 
-            <div class="tab-content pt-3">
-              <div class="tab-pane fade show active" id="id-pane" role="tabpanel">
-                <div class="row g-3 align-items-end">
-                  <div class="col-md-7">
+            <div class="tab-content query-content">
+              <div class="tab-pane fade show active" id="id-pane" role="tabpanel" aria-labelledby="id-tab">
+                <div class="query-form-grid">
+                  <div class="query-input-main">
                     <label class="form-label" for="cellId">细胞编号</label>
-                    <input id="cellId" class="form-control" value="AAACCTGAGCAGGTCA-1_2">
+                    <input id="cellId" class="form-control dashboard-input" value="AAACCTGAGCAGGTCA-1_2" placeholder="请输入细胞 ID">
                   </div>
-                  <div class="col-md-2">
+                  <div>
                     <label class="form-label" for="topKId">Top-K</label>
-                    <input id="topKId" class="form-control" type="number" min="1" max="100" value="10">
+                    <input id="topKId" class="form-control dashboard-input" type="number" min="1" max="10000" value="10">
                   </div>
-                  <div class="col-md-3">
-                    <button id="searchByIdBtn" class="btn btn-dark w-100">查询</button>
+                  <div class="query-submit-cell">
+                    <button id="searchByIdBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>
                   </div>
                 </div>
               </div>
 
-              <div class="tab-pane fade" id="vector-pane" role="tabpanel">
-                <div class="row g-3 align-items-end">
-                  <div class="col-md-7">
+              <div class="tab-pane fade" id="vector-pane" role="tabpanel" aria-labelledby="vector-tab">
+                <div class="query-form-grid">
+                  <div class="query-input-main">
                     <label class="form-label" for="queryVector">查询向量</label>
-                    <input id="queryVector" class="form-control" placeholder="输入逗号分隔的 30 维向量">
+                    <textarea id="queryVector" class="form-control dashboard-input vector-input" rows="3" placeholder="输入 30 维向量，或选择 CSV 导入原始/30维向量"></textarea>
+                    <input id="queryVectorCsv" class="form-control dashboard-input mt-2" type="file" accept=".csv">
                   </div>
-                  <div class="col-md-2">
+                  <div>
                     <label class="form-label" for="topKVector">Top-K</label>
-                    <input id="topKVector" class="form-control" type="number" min="1" max="100" value="10">
+                    <input id="topKVector" class="form-control dashboard-input" type="number" min="1" max="10000" value="10">
                   </div>
-                  <div class="col-md-3">
-                    <button id="searchByVectorBtn" class="btn btn-dark w-100">查询</button>
+                  <div class="query-submit-cell">
+                    <button id="searchByVectorBtn" type="button" class="btn action-btn dark-btn w-100">开始查询</button>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div class="table-responsive mt-4">
-              <table class="table table-hover align-middle">
+            <div id="queryStatus" class="status-message neutral-message">输入细胞 ID 或向量后即可执行相似检索</div>
+            <div id="evaluationSummary" class="status-message neutral-message">Exact evaluation is off.</div>
+          </section>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="results-header">
+            <div>
+              <h2 class="panel-title mb-1">结果展示区</h2>
+              <p class="panel-description">围绕 UMAP 预览、统计分布和 Top-K 检索结果构建统一分析工作区。</p>
+            </div>
+          </div>
+
+          <div id="datasetOverviewStrip" class="dataset-overview-strip">
+            <button type="button" class="overview-chip" data-overview-key="dataset_name">
+              <span class="overview-chip-label">数据集名称</span>
+              <strong id="overviewDatasetName" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="total_cells">
+              <span class="overview-chip-label">总细胞数</span>
+              <strong id="overviewTotalCells" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="cell_type_count">
+              <span class="overview-chip-label">细胞类型</span>
+              <strong id="overviewCellTypeCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="sample_count">
+              <span class="overview-chip-label">样本数</span>
+              <strong id="overviewSampleCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="avg_gene_count">
+              <span class="overview-chip-label">平均基因数</span>
+              <strong id="overviewAvgGeneCount" class="overview-chip-value">--</strong>
+            </button>
+            <button type="button" class="overview-chip" data-overview-key="avg_mito_pct">
+              <span class="overview-chip-label">线粒体比例</span>
+              <strong id="overviewAvgMitoPct" class="overview-chip-value">--</strong>
+            </button>
+          </div>
+
+          <div class="analysis-stage">
+            <aside class="stats-sidebar">
+              <details class="stats-card" open>
+                <summary class="stats-card-summary">
+                  <span>细胞类型分布统计</span>
+                  <span id="cellTypeScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div id="cellTypeDonutChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="cellTypeQualityBarChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+
+              <details class="stats-card" open>
+                <summary class="stats-card-summary">
+                  <span>样本来源分布统计</span>
+                  <span id="sampleScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div id="sampleStackChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="sampleSimilarityChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+
+              <details class="stats-card">
+                <summary class="stats-card-summary">
+                  <span>数据质量统计</span>
+                  <span id="qualityScopeNote" class="stats-scope-note">全局</span>
+                </summary>
+                <div class="stats-card-body">
+                  <div class="quality-chart-toolbar">
+                    <button id="qualityMetricGeneBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn is-active" data-quality-metric="gene">基因数</button>
+                    <button id="qualityMetricUmiBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn" data-quality-metric="umi">UMI</button>
+                    <button id="qualityMetricMitoBtn" type="button" class="btn action-btn secondary-btn btn-sm quality-metric-btn" data-quality-metric="mito">线粒体比例</button>
+                  </div>
+                  <div id="qualityHistogramChart" class="stats-chart stats-chart-medium"></div>
+                  <div id="qualityBoxplotChart" class="stats-chart stats-chart-small"></div>
+                </div>
+              </details>
+            </aside>
+
+            <section class="analysis-workspace">
+              <section class="viz-card viz-main-card">
+                <div class="viz-card-header">
+                  <div>
+                    <h3 class="viz-title">UMAP 散点分布</h3>
+                    <p class="viz-description">支持多层预览、按字段着色、框选分析与结果联动，用于观察细胞在嵌入空间中的结构和检索命中位置。</p>
+                  </div>
+                  <div class="viz-right-actions">
+                    <div id="umapLegend" class="viz-legend">等待加载</div>
+                    <select id="umapPreviewLevel" class="form-select dashboard-input viz-select">
+                      <option value="preview">快速预览层</option>
+                      <option value="cluster">分群聚合层</option>
+                      <option value="detail">细节探索层</option>
+                    </select>
+                    <select id="umapColorMode" class="form-select dashboard-input viz-select">
+                      <option value="default">默认单色</option>
+                      <option value="cell_type">按细胞类型着色</option>
+                      <option value="disease">按疾病状态着色</option>
+                    </select>
+                    <button id="exportUmapCsvBtn" type="button" class="btn action-btn secondary-btn btn-sm">Export CSV</button>
+                    <button id="exportUmapJsonBtn" type="button" class="btn action-btn secondary-btn btn-sm">Export JSON</button>
+                    <button id="resetUmapBtn" type="button" class="btn action-btn secondary-btn btn-sm">恢复默认</button>
+                  </div>
+                </div>
+                <div class="viz-toolbar">
+                  <div id="umapInfoBar" class="umap-info-bar">
+                    <span id="umapInfoTotal" class="info-chip">总量 --</span>
+                    <span id="umapInfoShown" class="info-chip">预览 --</span>
+                    <span id="umapInfoFiltered" class="info-chip">筛选后 --</span>
+                    <span id="umapInfoSource" class="info-chip">来源 --</span>
+                    <span id="umapInfoSampled" class="info-chip">采样 --</span>
+                  </div>
+                  <div class="umap-visual-legend" aria-label="UMAP 图例">
+                    <span class="legend-pill legend-bg">背景点</span>
+                    <span class="legend-pill legend-center">查询中心点</span>
+                    <span class="legend-pill legend-hit">Top-K 命中点</span>
+                    <span class="legend-pill legend-focus">当前聚焦</span>
+                  </div>
+                </div>
+                <div class="umap-selection-note">
+                  支持框选当前视图中的细胞子集，左侧统计卡会自动切换到选区统计。
+                </div>
+                <div class="umap-chart-shell">
+                  <div id="umapLoadingOverlay" class="umap-loading-overlay d-none" aria-live="polite">
+                    <div class="umap-skeleton-glow"></div>
+                    <div class="umap-loading-text">正在更新 UMAP 预览...</div>
+                  </div>
+                  <div id="umapChart" class="umap-chart" aria-label="UMAP 散点图"></div>
+                </div>
+              </section>
+
+              <div class="workspace-side-grid">
+                <section class="viz-card viz-side-card">
+                  <h3 class="viz-title">状态摘要</h3>
+                  <p class="viz-description">汇总当前查询模式、结果数量、耗时和高亮点数，帮助观察系统运行状态与检索效果。</p>
+                  <dl class="query-metrics">
+                    <dt>当前模式</dt>
+                    <dd id="queryModeMetric">未查询</dd>
+                    <dt>结果数量</dt>
+                    <dd id="resultCountMetric">0</dd>
+                    <dt>最近耗时</dt>
+                    <dd id="queryTimeMetric">--</dd>
+                    <dt>高亮点数</dt>
+                    <dd id="highlightMetric">0</dd>
+                    <dt>Precision@K</dt>
+                    <dd id="precisionMetric" class="metric-optional">--</dd>
+                    <dt>Recall@K</dt>
+                    <dd id="recallMetric" class="metric-optional">--</dd>
+                    <dt>ANN Time</dt>
+                    <dd id="annTimeMetric" class="metric-optional">--</dd>
+                    <dt>Exact Time</dt>
+                    <dd id="exactTimeMetric" class="metric-optional">--</dd>
+                  </dl>
+                </section>
+
+                <section class="viz-card viz-side-card">
+                  <h3 class="viz-title">细胞详情</h3>
+                  <p class="viz-description">点击单个细胞后显示其关键元数据，可结合统计卡和表格联动查看。</p>
+                  <dl id="cellDetailPanel" class="query-metrics">
+                    <dt>状态</dt>
+                    <dd>尚未选中细胞</dd>
+                  </dl>
+                </section>
+              </div>
+            </section>
+          </div>
+
+          <div class="table-shell">
+            <div class="table-responsive">
+              <table class="table results-table align-middle mb-0">
                 <thead>
                   <tr>
                     <th>排名</th>
@@ -161,19 +850,246 @@
                     <th>性别</th>
                   </tr>
                 </thead>
-                <tbody id="resultsBody">
+                <tbody id="resultsBody" class="results-body">
                   <tr>
-                    <td colspan="8" class="text-center text-secondary py-4">暂无查询结果</td>
+                    <td colspan="8" class="table-state">暂无查询结果，请先构建索引并执行查询</td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <nav id="resultsPagination" class="results-pagination d-none" hidden aria-label="查询结果分页">
+              <span id="resultsPageSummary" class="results-page-summary">显示 0-0 条，共 0 条</span>
+              <div class="results-page-controls">
+                <button id="resultsPrevPage" type="button" class="results-page-nav" aria-label="上一页">上一页</button>
+                <div id="resultsPageButtons" class="results-page-buttons" aria-label="页码"></div>
+                <button id="resultsNextPage" type="button" class="results-page-nav" aria-label="下一页">下一页</button>
+              </div>
+            </nav>
           </div>
         </section>
-      </div>
-    </main>
+      </main>
+    </div>
 
+    <div id="contextHelpOverlay" class="context-help-overlay d-none" hidden>
+      <div id="contextHelpOverlayCard" class="context-help-overlay-card" role="dialog" aria-modal="false" aria-label="索引与参数说明">
+        <button id="contextHelpOverlayClose" type="button" class="context-help-overlay-close" aria-label="关闭说明">×</button>
+        <div id="contextHelpOverlayBody"></div>
+      </div>
+    </div>
+
+    <div id="aiAssistantDock" class="ai-assistant-dock d-none" hidden>
+      <button id="aiAssistantLauncher" type="button" class="ai-assistant-launcher" aria-label="打开 AI 助手">
+        <span class="ai-assistant-launcher-badge">AI</span>
+        <span class="ai-assistant-launcher-label">AI 助手</span>
+      </button>
+      <section id="aiAssistantPanel" class="ai-assistant-panel d-none" hidden aria-live="polite">
+        <div id="aiAssistantDragHandle" class="ai-assistant-header">
+          <div class="ai-assistant-brand">
+            <span class="ai-assistant-logo">SC</span>
+            <div>
+              <p class="ai-assistant-kicker">AI Cell Copilot</p>
+              <h3 class="ai-assistant-title">AI 问答助手</h3>
+              <p class="ai-assistant-subtitle">自然语言查询细胞、结果解释、知识问答与索引建议</p>
+            </div>
+          </div>
+          <div class="ai-assistant-window-actions">
+            <button id="aiAssistantMoveToggle" type="button" class="ai-assistant-window-btn" aria-label="切换移动模式">✥</button>
+            <button id="aiAssistantFullscreenToggle" type="button" class="ai-assistant-window-btn" aria-label="切换全屏">⛶</button>
+            <button id="aiAssistantClose" type="button" class="ai-assistant-window-btn ai-assistant-close" aria-label="关闭 AI 助手">×</button>
+          </div>
+        </div>
+        <div class="ai-assistant-body">
+          <section class="ai-assistant-hero">
+            <div class="ai-assistant-hero-copy">
+              <p id="aiAssistantHeroEyebrow" class="ai-assistant-hero-eyebrow">Hi~</p>
+              <h4 id="aiAssistantHeroTitle" class="ai-assistant-hero-title">我是单细胞 AI 助手</h4>
+              <p id="aiAssistantHeroDescription" class="ai-assistant-hero-description">
+                我会结合当前数据集、检索结果和知识库，帮助你完成从提问到解释的完整分析链路。
+              </p>
+            </div>
+            <div class="ai-assistant-hero-visual" aria-hidden="true">
+              <div class="ai-assistant-hero-orb"></div>
+              <div class="ai-assistant-hero-ring"></div>
+              <span class="ai-assistant-hero-badge">RAG + Cell</span>
+            </div>
+          </section>
+
+          <section class="ai-assistant-mode-section">
+            <div class="ai-assistant-section-header">
+              <div>
+                <p class="ai-assistant-section-kicker">问答模式</p>
+                <h5 class="ai-assistant-section-title">四种分析入口</h5>
+              </div>
+              <span class="ai-assistant-section-note">切换后会同步欢迎语和推荐问题</span>
+            </div>
+            <div id="aiAssistantModeCards" class="ai-assistant-mode-grid"></div>
+          </section>
+
+          <section class="ai-assistant-suggestions-card">
+            <div class="ai-assistant-section-header">
+              <div>
+                <p class="ai-assistant-section-kicker">推荐问题</p>
+                <h5 class="ai-assistant-section-title">从这里开始提问</h5>
+              </div>
+              <button id="aiAssistantRefreshSuggestions" type="button" class="ai-assistant-link-btn">换一批</button>
+            </div>
+            <div id="aiAssistantSuggestionsList" class="ai-assistant-suggestions-list"></div>
+          </section>
+
+          <div id="aiAssistantStatus" class="status-message neutral-message">
+            可切换模式后提问，系统会联动知识库、细胞结果和 UMAP 展示。
+          </div>
+
+          <section id="aiAssistantConversationSection" class="ai-assistant-conversation">
+            <div class="ai-assistant-conversation-header">
+              <div>
+                <p class="ai-assistant-section-kicker">对话区</p>
+                <h5 class="ai-assistant-section-title">我和 AI 的问答</h5>
+              </div>
+              <button id="aiAssistantConversationToggle" type="button" class="ai-assistant-link-btn" aria-label="展开对话区">展开对话区</button>
+            </div>
+            <div id="aiAssistantMessages" class="ai-assistant-messages">
+              <div class="ai-assistant-placeholder">
+                这里会显示你和 AI 的对话内容，并在命中细胞结果时自动更新右侧结果表和 UMAP 高亮。
+              </div>
+            </div>
+          </section>
+
+          <div class="ai-assistant-composer">
+            <textarea
+              id="aiAssistantInput"
+              class="form-control dashboard-input ai-assistant-input"
+              rows="4"
+              placeholder="请输入你的问题，Ctrl + Enter 发送"
+            ></textarea>
+            <div class="ai-assistant-composer-footer">
+              <p class="ai-assistant-disclaimer">由 AI 助手提供服务，回答仅供参考。</p>
+              <div class="ai-assistant-composer-actions">
+                <button id="aiAssistantRegenerateBtn" type="button" class="btn ai-assistant-secondary-btn">重新生成</button>
+                <button id="aiAssistantSendBtn" type="button" class="btn action-btn primary-btn ai-assistant-send-btn">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      (function () {
+        function authMessage(message, tone) {
+          var box = document.getElementById("authMessage");
+          if (!box) return;
+          box.className = "status-message " + (tone === "error" ? "error-message" : tone === "success" ? "success-message" : "neutral-message") + " mb-3";
+          box.textContent = message;
+          box.classList.remove("d-none");
+          box.hidden = false;
+        }
+
+        function authPayload() {
+          return {
+            username: (document.getElementById("authUsername") || {}).value || "",
+            password: (document.getElementById("authPassword") || {}).value || "",
+            role: "user"
+          };
+        }
+
+        function showLoggedInViews(user) {
+          var authView = document.getElementById("authView");
+          var hubView = document.getElementById("hubView");
+          var mainView = document.getElementById("mainView");
+          var hubUserLabel = document.getElementById("hubCurrentUserLabel");
+          var mainUserLabel = document.getElementById("currentUserLabel");
+
+          if (authView) {
+            authView.classList.add("d-none");
+            authView.hidden = true;
+          }
+          if (mainView) {
+            mainView.classList.add("d-none");
+            mainView.hidden = true;
+          }
+          if (hubView) {
+            hubView.classList.remove("d-none");
+            hubView.hidden = false;
+          }
+
+          var label = user && user.username ? user.username + " (" + (user.role || "user") + ")" : "--";
+          if (hubUserLabel) hubUserLabel.textContent = label;
+          if (mainUserLabel) mainUserLabel.textContent = label;
+        }
+
+        window.__seworkLogin = async function () {
+          var btn = document.getElementById("loginBtn");
+          if (btn) btn.disabled = true;
+          authMessage("正在登录...", "neutral");
+          try {
+            var payload = authPayload();
+            var response = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username: String(payload.username || "").trim(), password: payload.password || "" })
+            });
+            var data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "登录失败");
+            }
+            authMessage("登录成功，正在进入系统...", "success");
+            if (window.__seworkAfterLogin) {
+              try {
+                await window.__seworkAfterLogin(data.token, data.user || null);
+                return;
+              } catch (afterLoginError) {
+                console.error("afterLogin bridge failed", afterLoginError);
+              }
+            }
+            localStorage.setItem("authToken", data.token);
+            localStorage.setItem("currentUser", JSON.stringify(data.user || null));
+            showLoggedInViews(data.user || null);
+            if (window.fetch) {
+              fetch("/api/indexes", {
+                headers: { Authorization: "Bearer " + data.token }
+              }).catch(function () {});
+            } else {
+              window.location.replace("/?_ts=" + Date.now());
+            }
+          } catch (error) {
+            authMessage(error.message || "登录失败", "error");
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+
+        window.__seworkRegister = async function () {
+          var btn = document.getElementById("registerBtn");
+          if (btn) btn.disabled = true;
+          authMessage("正在注册...", "neutral");
+          try {
+            var payload = authPayload();
+            var response = await fetch("/api/auth/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                username: String(payload.username || "").trim(),
+                password: payload.password || "",
+                role: "user"
+              })
+            });
+            var data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || "注册失败");
+            }
+            authMessage("注册成功，请点击登录。", "success");
+          } catch (error) {
+            authMessage(error.message || "注册失败", "error");
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+        };
+      })();
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260607-query-csv-1"></script>
   </body>
 </html>

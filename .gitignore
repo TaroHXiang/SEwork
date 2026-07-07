@@ -1,9 +1,78 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+
+# 虚拟环境
+venv/
+env/
+.venv/
+
+# 环境变量（包含密钥、密码、API Key）
 .env
+.env.local
+.env.*.local
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
+
+# 调试文件
+debug-*.md
+
+# 知识库索引产物（自动生成，来源见 knowledge/source/）
+knowledge/index/knowledge.faiss
+knowledge/index/metadata.json
+
+# 知识库生成文件（体积大，可从源码重建）
+data/kb/cell_marker_kb.jsonl
+data/kb/cell_marker_kb_filtered.jsonl
+data/kb/sc_knowledge.jsonl
+data/kb/sc_concepts.jsonl
+knowledge/source/cell_marker_kb_filtered.jsonl
+knowledge/source/cell_marker_kb.jsonl
+
+# 用户数据与样本数据
+data/*.h5ad
+data/*.h5mu
+data/*.csv
+data/*.npz
+data/liver.h5ad
+data/liver_subset.h5ad
+data/kb/user/
+
+# Docker 容器数据卷（数据库文件、FAISS 索引存储）
+mysql_data/
+faiss_storage/
+
+# 旧版向量检索（已迁移到独立服务）
 .qdrant/
 qdrant_storage/
 
-*.h5ad
-*.h5mu
+# 前端构建产物（如有）
+node_modules/
+static/dist/
+static/*.map
+data/kb/all_cell_marker/all_cell_marker.txt
