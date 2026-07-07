@@ -23,6 +23,8 @@ DEFAULT_SEARCH_PARAMS = {
     "hnsw_ef": 128,
     "nprobe": 8,
     "exact": False,
+    "rerank_k": 50,
+    "filter_candidate_multiplier": 20,
 }
 DEFAULT_INDEX_TYPE = "hnsw"
 DEFAULT_DISTANCE_METRIC = "cosine"
@@ -357,7 +359,7 @@ class CellVectorIndex:
         candidate_offsets = _matching_offsets(collection.metadata, filters)
 
         start_time = perf_counter()
-        if resolved_search["exact"] or filters:
+        if resolved_search["exact"]:
             raw_hits = _exact_search(
                 vectors=collection.vectors,
                 query_vector=query_vector,
@@ -365,12 +367,29 @@ class CellVectorIndex:
                 top_k=top_k,
                 distance_metric=resolved_distance_metric,
             )
-        else:
-            raw_hits = _ann_search(
+        elif filters:
+            raw_hits = _ann_filtered_rerank_search(
                 collection=collection,
                 query_vector=query_vector,
                 top_k=top_k,
                 search_params=resolved_search,
+                distance_metric=resolved_distance_metric,
+                candidate_offsets=candidate_offsets,
+            )
+        else:
+            ann_top_k = max(top_k, int(resolved_search["rerank_k"]))
+            ann_hits = _ann_search(
+                collection=collection,
+                query_vector=query_vector,
+                top_k=ann_top_k,
+                search_params=resolved_search,
+                distance_metric=resolved_distance_metric,
+            )
+            raw_hits = _rerank_ann_hits(
+                vectors=collection.vectors,
+                query_vector=query_vector,
+                ann_hits=ann_hits,
+                top_k=top_k,
                 distance_metric=resolved_distance_metric,
             )
         elapsed_ms = round((perf_counter() - start_time) * 1000, 2)
@@ -781,12 +800,20 @@ def _resolve_search_params(
             resolved["nprobe"] = int(search_params["nprobe"])
         if search_params.get("exact") is not None:
             resolved["exact"] = bool(search_params["exact"])
+        if search_params.get("rerank_k") is not None:
+            resolved["rerank_k"] = int(search_params["rerank_k"])
+        if search_params.get("filter_candidate_multiplier") is not None:
+            resolved["filter_candidate_multiplier"] = int(search_params["filter_candidate_multiplier"])
     if exact is not None:
         resolved["exact"] = bool(exact)
     if resolved["hnsw_ef"] < 16 or resolved["hnsw_ef"] > 4096:
         raise ValueError("search_params.hnsw_ef must be between 16 and 4096")
     if resolved["nprobe"] < 1 or resolved["nprobe"] > 4096:
         raise ValueError("search_params.nprobe must be between 1 and 4096")
+    if resolved["rerank_k"] < 1 or resolved["rerank_k"] > 10000:
+        raise ValueError("search_params.rerank_k must be between 1 and 10000")
+    if resolved["filter_candidate_multiplier"] < 1 or resolved["filter_candidate_multiplier"] > 1000:
+        raise ValueError("search_params.filter_candidate_multiplier must be between 1 and 1000")
     if index_type not in SUPPORTED_INDEX_TYPES:
         raise ValueError(f"unsupported index_type: {index_type}")
     return resolved
@@ -987,6 +1014,84 @@ def _ann_search(
             continue
         hits.append((int(label), float(raw_value), squared_l2))
     return hits
+
+
+def _ann_filtered_rerank_search(
+    *,
+    collection: _StoredCollection,
+    query_vector: np.ndarray,
+    top_k: int,
+    search_params: dict,
+    distance_metric: str,
+    candidate_offsets: np.ndarray,
+) -> list[tuple[int, float, bool]]:
+    if len(candidate_offsets) == 0:
+        return []
+
+    ann_top_k = max(
+        top_k,
+        int(search_params["rerank_k"]),
+        top_k * int(search_params["filter_candidate_multiplier"]),
+    )
+    ntotal = int(getattr(collection.index, "ntotal", len(collection.vectors)) or len(collection.vectors))
+    ann_top_k = min(max(1, ann_top_k), ntotal)
+    ann_hits = _ann_search(
+        collection=collection,
+        query_vector=query_vector,
+        top_k=ann_top_k,
+        search_params=search_params,
+        distance_metric=distance_metric,
+    )
+    allowed_offsets = set(int(offset) for offset in candidate_offsets.tolist())
+    filtered_offsets = _unique_offsets(offset for offset, _, _ in ann_hits if offset in allowed_offsets)
+    if len(filtered_offsets) >= top_k:
+        return _exact_search(
+            vectors=collection.vectors,
+            query_vector=query_vector,
+            candidate_offsets=np.asarray(filtered_offsets, dtype=np.int64),
+            top_k=top_k,
+            distance_metric=distance_metric,
+        )
+
+    return _exact_search(
+        vectors=collection.vectors,
+        query_vector=query_vector,
+        candidate_offsets=candidate_offsets,
+        top_k=top_k,
+        distance_metric=distance_metric,
+    )
+
+
+def _rerank_ann_hits(
+    *,
+    vectors: np.ndarray,
+    query_vector: np.ndarray,
+    ann_hits: list[tuple[int, float, bool]],
+    top_k: int,
+    distance_metric: str,
+) -> list[tuple[int, float, bool]]:
+    candidate_offsets = _unique_offsets(offset for offset, _, _ in ann_hits)
+    if not candidate_offsets:
+        return []
+    return _exact_search(
+        vectors=vectors,
+        query_vector=query_vector,
+        candidate_offsets=np.asarray(candidate_offsets, dtype=np.int64),
+        top_k=top_k,
+        distance_metric=distance_metric,
+    )
+
+
+def _unique_offsets(offsets: Iterable[int]) -> list[int]:
+    seen: set[int] = set()
+    unique: list[int] = []
+    for offset in offsets:
+        normalized = int(offset)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
 
 
 def _exact_search(

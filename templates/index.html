@@ -20,6 +20,26 @@
     </div>
     <div id="authView" class="auth-wrapper">
       <div class="auth-card">
+        <div class="auth-visual-panel" aria-hidden="true">
+          <div class="auth-visual-badge">scRNA ANN Search</div>
+          <div class="auth-cell-map">
+            <span class="auth-cell-link l1"></span>
+            <span class="auth-cell-link l2"></span>
+            <span class="auth-cell-link l3"></span>
+            <span class="auth-cell-point p1"></span>
+            <span class="auth-cell-point p2"></span>
+            <span class="auth-cell-point p3"></span>
+            <span class="auth-cell-point p4"></span>
+            <span class="auth-cell-point p5"></span>
+            <span class="auth-cell-point p6"></span>
+          </div>
+          <div class="auth-visual-metrics">
+            <span><b>ANN</b> index</span>
+            <span><b>Top-K</b> retrieval</span>
+            <span><b>UMAP</b> insight</span>
+          </div>
+        </div>
+        <div class="auth-form-panel">
         <div class="auth-brand-block">
           <h1 class="auth-title">单细胞相似性检索系统</h1>
           <p class="auth-subtitle">Single-cell Similarity Retrieval Platform</p>
@@ -41,9 +61,11 @@
         <div id="authMessage" class="status-message neutral-message d-none mb-3"></div>
 
         <div class="auth-actions">
+          <button id="registerBtn" type="button" onclick="window.__seworkRegister && window.__seworkRegister()" class="btn action-btn secondary-btn flex-fill">注册账号</button>
           <button id="loginBtn" type="button" onclick="window.__seworkLogin && window.__seworkLogin()" class="btn btn-primary action-btn primary-btn flex-fill">登录系统</button>
         </div>
         <p class="auth-footnote">账号由管理员创建，如需访问权限请联系项目负责人。</p>
+        </div>
       </div>
     </div>
 
@@ -685,7 +707,7 @@
                 </div>
               </div>
 
-              <details class="filter-bar-more">
+              <details class="filter-bar-more" open>
                 <summary class="filter-bar-more-summary">+ More Filters</summary>
                 <div class="filter-grid query-filter-grid query-filter-grid-advanced">
                   <div>

@@ -49,7 +49,7 @@ RAG_FAISS_PATH = RAG_INDEX_DIR / "knowledge.faiss"
 RAG_METADATA_PATH = RAG_INDEX_DIR / "metadata.json"
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeDocument:
     doc_id: str
     source: str
@@ -87,7 +87,7 @@ class KnowledgeDocument:
         )
 
 
-@dataclass(slots=True)
+@dataclass
 class KnowledgeIndex:
     documents: tuple[KnowledgeDocument, ...]
     faiss_index: faiss.Index

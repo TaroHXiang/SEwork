@@ -823,7 +823,11 @@ def _resolve_preview_metadata_mapping(available_columns: list[str]) -> dict[str,
 
 
 def _string_series(values) -> pd.Series:
-    series = pd.Series(values).fillna("Unknown").astype(str)
+    # Categorical columns cannot accept a new fill value unless it is already a
+    # category. Convert to object first so missing values can be normalized
+    # consistently for h5ad obs metadata.
+    series = pd.Series(values).astype("object")
+    series = series.where(series.notna(), "Unknown").astype(str)
     return series.replace({"nan": "Unknown", "None": "Unknown", "": "Unknown"})
 
 

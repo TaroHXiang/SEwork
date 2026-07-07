@@ -1296,9 +1296,51 @@ function renderAiAssistantArtifacts(artifacts = null) {
   if (artifacts.model && artifacts.model !== "rule-based-fallback") {
     chips.push(`<span class="ai-artifact-chip">${escapeHtml(artifacts.model)}</span>`);
   }
+  const knowledgeHitCount = Array.isArray(artifacts.knowledgeHits) ? artifacts.knowledgeHits.length : 0;
+  chips.push(
+    `<span class="ai-artifact-chip">${escapeHtml(knowledgeHitCount ? `RAG 知识命中 ${knowledgeHitCount}` : "RAG 知识未命中")}</span>`
+  );
   if (chips.length) {
     sections.push(`<div class="ai-assistant-artifact-chips">${chips.join("")}</div>`);
   }
+
+  const shouldSearchKnowledge = Boolean(artifacts.intent?.should_search_knowledge);
+  const knowledgeHints = artifacts.knowledgeHintsPayload || {};
+  const hintEntries = Object.entries(knowledgeHints).filter(([, value]) =>
+    Array.isArray(value) ? value.length : Boolean(value)
+  );
+  sections.push(`
+    <section class="ai-assistant-artifact-section">
+      <div class="ai-assistant-artifact-title">RAG 检索状态</div>
+      <ul class="ai-assistant-artifact-ul">
+        <li>
+          <strong>should_search_knowledge</strong>
+          <span>${escapeHtml(String(shouldSearchKnowledge))}</span>
+        </li>
+        <li>
+          <strong>knowledge_hits</strong>
+          <span>${escapeHtml(String(knowledgeHitCount))} 条</span>
+        </li>
+        <li>
+          <strong>retrieval_source</strong>
+          <span>${escapeHtml(artifacts.retrievalSource || "未返回")}</span>
+        </li>
+        ${
+          hintEntries.length
+            ? `<li>
+                <strong>knowledge_hints</strong>
+                <span>${escapeHtml(
+                  hintEntries
+                    .slice(0, 4)
+                    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.slice(0, 6).join(", ") : value}`)
+                    .join(" | ")
+                )}</span>
+              </li>`
+            : ""
+        }
+      </ul>
+    </section>
+  `);
 
   const filters = Object.entries(artifacts.appliedFilters || {});
   if (filters.length) {
@@ -1398,6 +1440,36 @@ function renderAiAssistantArtifacts(artifacts = null) {
                 </li>
               `
             )
+            .join("")}
+        </ul>
+      </section>
+    `);
+  }
+
+  if (knowledgeHits.length) {
+    sections.push(`
+      <section class="ai-assistant-artifact-section">
+        <div class="ai-assistant-artifact-title">RAG 命中详情</div>
+        <ul class="ai-assistant-artifact-ul">
+          ${knowledgeHits
+            .map((item) => {
+              const markerGenes = Array.isArray(item.marker_genes) ? item.marker_genes.slice(0, 8).join(", ") : "";
+              const meta = [
+                item.source ? `source=${item.source}` : "",
+                item.retrieval_method ? `method=${item.retrieval_method}` : "",
+                item.score !== undefined ? `score=${item.score}` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return `
+                <li>
+                  <strong>${escapeHtml(String(item.title ?? ""))}</strong>
+                  <span>${escapeHtml(meta || "未返回来源信息")}</span>
+                  ${markerGenes ? `<span>marker_genes: ${escapeHtml(markerGenes)}</span>` : ""}
+                  <span>${escapeHtml(trimText(item.summary || item.content || "").slice(0, 140))}</span>
+                </li>
+              `;
+            })
             .join("")}
         </ul>
       </section>
@@ -1521,9 +1593,11 @@ function buildAiAssistantArtifacts(response = {}) {
     model: response.model || "",
     retrievalSource: response.retrieval_source || "",
     appliedFilters: response.applied_filters || {},
+    intent: response.intent || {},
     cellSummary: response.cell_summary || {},
     cellHits: response.cell_hits || [],
     knowledgeHits: response.knowledge_hits || [],
+    knowledgeHintsPayload: response.knowledge_hints || {},
     nextSteps: response.next_steps || [],
   };
 }
@@ -2753,7 +2827,7 @@ function renderCellDetail(cellId = "") {
   if (!cellDetailPanel) return;
   const point = findPointByCellId(cellId);
   const result = findResultByCellId(cellId);
-  if (!cellId || !point) {
+  if (!cellId || (!point && !result)) {
     if (state.umapSelectionCellIds.length > 1) {
       const scopeAnalytics = buildScopeAnalytics(getCurrentScopePoints());
       cellDetailPanel.innerHTML = `
@@ -2766,7 +2840,7 @@ function renderCellDetail(cellId = "") {
     cellDetailPanel.innerHTML = `<dt>状态</dt><dd>尚未选中细胞</dd>`;
     return;
   }
-  const metadata = point.metadata || {};
+  const metadata = point?.metadata || result?.metadata || {};
   const entries = [
     ["细胞 ID", cellId],
     ["细胞类型", metadata.cell_type || "-"],
@@ -2779,9 +2853,11 @@ function renderCellDetail(cellId = "") {
     ["基因数", formatNumber(metadata.gene_count)],
     ["UMI", formatNumber(metadata.umi_count)],
     ["线粒体比例", formatPercentValue(metadata.mito_pct)],
-    ["UMAP X", formatMetric(point.x)],
-    ["UMAP Y", formatMetric(point.y)],
   ];
+  if (point) {
+    entries.push(["UMAP X", formatMetric(point.x)]);
+    entries.push(["UMAP Y", formatMetric(point.y)]);
+  }
   if (result) {
     entries.push(["距离", formatMetric(result.distance)]);
     entries.push(["相似度", formatMetric(result.score)]);
@@ -3149,15 +3225,18 @@ function applyChartFocus(key, value) {
 async function loadAnalyticsForCurrentDataset() {
   if (!state.currentDataPath) {
     state.analyticsGlobal = null;
+    renderDatasetInfo(state.currentDatasetInfo || {});
     renderAnalyticsForCurrentState();
     return;
   }
   try {
     const analytics = await getJson(`/api/dataset/umap-stats?data_path=${encodeURIComponent(state.currentDataPath)}`);
     state.analyticsGlobal = analytics;
+    renderDatasetInfo(state.currentDatasetInfo || {});
     renderAnalyticsForCurrentState();
   } catch (error) {
     state.analyticsGlobal = null;
+    renderDatasetInfo(state.currentDatasetInfo || {});
     renderAnalyticsForCurrentState();
     setMessage(queryStatus, `统计数据加载失败：${error.message}`, "neutral");
   }
