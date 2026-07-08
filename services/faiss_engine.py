@@ -483,6 +483,125 @@ class CellVectorIndex:
             "exact_results": exact.results,
         }
 
+    def compare_ann_improvement_by_cell_id(
+        self,
+        collection_name: str,
+        vector_dim: int,
+        cell_id: str,
+        top_k: int = 10,
+        filters: dict[str, str] | None = None,
+        search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+    ) -> dict:
+        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
+        if not vector:
+            raise ValueError(f"unknown cell_id: {cell_id}")
+        return self.compare_ann_improvement_by_vector(
+            collection_name=collection_name,
+            vector_dim=vector_dim,
+            vector=vector,
+            top_k=top_k,
+            filters=filters,
+            search_params=search_params,
+            distance_metric=distance_metric,
+            vector_is_prepared=True,
+        )
+
+    def compare_ann_improvement_by_vector(
+        self,
+        collection_name: str,
+        vector_dim: int,
+        vector: Iterable[float],
+        top_k: int = 10,
+        filters: dict[str, str] | None = None,
+        search_params: dict | None = None,
+        distance_metric: str = DEFAULT_DISTANCE_METRIC,
+        vector_is_prepared: bool = False,
+    ) -> dict:
+        old_params = dict(search_params or {})
+        old_params["rerank_k"] = top_k
+        old_params["filter_candidate_multiplier"] = 1
+
+        old_ann = self.search_by_vector_with_timing(
+            collection_name=collection_name,
+            vector_dim=vector_dim,
+            vector=vector,
+            top_k=top_k,
+            filters=filters,
+            search_params=old_params,
+            distance_metric=distance_metric,
+            vector_is_prepared=vector_is_prepared,
+            exact=False,
+        )
+        improved_ann = self.search_by_vector_with_timing(
+            collection_name=collection_name,
+            vector_dim=vector_dim,
+            vector=vector,
+            top_k=top_k,
+            filters=filters,
+            search_params=search_params,
+            distance_metric=distance_metric,
+            vector_is_prepared=vector_is_prepared,
+            exact=False,
+        )
+        exact = self.search_by_vector_with_timing(
+            collection_name=collection_name,
+            vector_dim=vector_dim,
+            vector=vector,
+            top_k=top_k,
+            filters=filters,
+            search_params=search_params,
+            distance_metric=distance_metric,
+            vector_is_prepared=vector_is_prepared,
+            exact=True,
+        )
+
+        exact_ids = [item["cell_id"] for item in exact.results]
+
+        def summarize(label: str, output: SearchResult, *, is_exact: bool = False) -> dict:
+            ids = [item["cell_id"] for item in output.results]
+            overlap_count = len(set(ids) & set(exact_ids))
+            precision = overlap_count / len(ids) if ids else 0.0
+            recall = overlap_count / len(exact_ids) if exact_ids else 0.0
+            return {
+                "label": label,
+                "query_time_ms": output.query_time_ms,
+                "precision_at_k": 1.0 if is_exact else round(precision, 6),
+                "recall_at_k": 1.0 if is_exact else round(recall, 6),
+                "overlap_count": len(exact_ids) if is_exact else overlap_count,
+                "result_count": len(ids),
+                "extra_persistent_memory_mb": 0.0,
+            }
+
+        old_summary = summarize("before", old_ann)
+        improved_summary = summarize("after", improved_ann)
+        exact_summary = summarize("exact", exact, is_exact=True)
+        time_delta = round(old_summary["query_time_ms"] - improved_summary["query_time_ms"], 2)
+        precision_delta = round(improved_summary["precision_at_k"] - old_summary["precision_at_k"], 6)
+        recall_delta = round(improved_summary["recall_at_k"] - old_summary["recall_at_k"], 6)
+
+        return {
+            "top_k": top_k,
+            "distance_metric": distance_metric,
+            "before": old_summary,
+            "after": improved_summary,
+            "exact": exact_summary,
+            "delta": {
+                "query_time_ms": time_delta,
+                "precision_at_k": precision_delta,
+                "recall_at_k": recall_delta,
+                "overlap_count": improved_summary["overlap_count"] - old_summary["overlap_count"],
+                "extra_persistent_memory_mb": 0.0,
+            },
+            "params": {
+                "before": old_params,
+                "after": dict(search_params or {}),
+                "method": "ANN coarse retrieval + exact rerank on candidates",
+            },
+            "ann_results": improved_ann.results,
+            "exact_results": exact.results,
+        }
+
     def collection_exists(self, collection_name: str) -> bool:
         collection_dir = self._collection_dir(collection_name)
         required_files = [

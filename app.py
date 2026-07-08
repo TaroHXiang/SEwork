@@ -165,6 +165,189 @@ def _parse_top_k(raw_value, default=5):
     return top_k
 
 
+def _benchmark_from_evaluation(evaluation: dict, top_k: int) -> dict:
+    after = {
+        "query_time_ms": evaluation.get("ann_query_time_ms"),
+        "precision_at_k": evaluation.get("precision_at_k"),
+        "recall_at_k": evaluation.get("recall_at_k"),
+        "overlap_count": evaluation.get("overlap_count"),
+        "result_count": len(evaluation.get("ann_results") or []),
+        "extra_persistent_memory_mb": 0.0,
+    }
+    return {
+        "top_k": top_k,
+        "distance_metric": evaluation.get("distance_metric"),
+        "before": {
+            "query_time_ms": None,
+            "precision_at_k": None,
+            "recall_at_k": None,
+            "overlap_count": None,
+            "result_count": None,
+            "extra_persistent_memory_mb": 0.0,
+        },
+        "after": after,
+        "exact": {
+            "query_time_ms": evaluation.get("exact_query_time_ms"),
+            "result_count": len(evaluation.get("exact_results") or []),
+        },
+        "delta": {
+            "query_time_ms": None,
+            "precision_at_k": None,
+            "recall_at_k": None,
+            "overlap_count": None,
+            "extra_persistent_memory_mb": 0.0,
+        },
+        "params": {
+            "method": "当前后端未暴露改进前 ANN 基线，已展示 ANN 与 Exact 的评估结果。",
+            "fallback": True,
+        },
+        "ann_results": evaluation.get("ann_results") or [],
+        "exact_results": evaluation.get("exact_results") or [],
+    }
+
+
+def _build_ann_improvement_benchmark_from_vector(
+    *,
+    collection_name: str,
+    vector_dim: int,
+    vector,
+    top_k: int,
+    filters: dict | None,
+    search_params: dict | None,
+    vector_is_prepared: bool = False,
+) -> dict:
+    old_params = dict(search_params or {})
+    old_params["rerank_k"] = top_k
+    old_params["filter_candidate_multiplier"] = 1
+
+    old_ann = index.search_by_vector_with_timing(
+        collection_name=collection_name,
+        vector_dim=vector_dim,
+        vector=vector,
+        top_k=top_k,
+        filters=filters,
+        search_params=old_params,
+        vector_is_prepared=vector_is_prepared,
+        exact=False,
+    )
+    improved_ann = index.search_by_vector_with_timing(
+        collection_name=collection_name,
+        vector_dim=vector_dim,
+        vector=vector,
+        top_k=top_k,
+        filters=filters,
+        search_params=search_params,
+        vector_is_prepared=vector_is_prepared,
+        exact=False,
+    )
+    exact = index.search_by_vector_with_timing(
+        collection_name=collection_name,
+        vector_dim=vector_dim,
+        vector=vector,
+        top_k=top_k,
+        filters=filters,
+        search_params=search_params,
+        vector_is_prepared=vector_is_prepared,
+        exact=True,
+    )
+    exact_ids = [item["cell_id"] for item in exact.results]
+
+    def summarize(label: str, output, *, is_exact: bool = False) -> dict:
+        ids = [item["cell_id"] for item in output.results]
+        overlap_count = len(set(ids) & set(exact_ids))
+        precision = overlap_count / len(ids) if ids else 0.0
+        recall = overlap_count / len(exact_ids) if exact_ids else 0.0
+        return {
+            "label": label,
+            "query_time_ms": output.query_time_ms,
+            "precision_at_k": 1.0 if is_exact else round(precision, 6),
+            "recall_at_k": 1.0 if is_exact else round(recall, 6),
+            "overlap_count": len(exact_ids) if is_exact else overlap_count,
+            "result_count": len(ids),
+            "extra_persistent_memory_mb": 0.0,
+        }
+
+    before = summarize("before", old_ann)
+    after = summarize("after", improved_ann)
+    exact_summary = summarize("exact", exact, is_exact=True)
+    return {
+        "top_k": top_k,
+        "before": before,
+        "after": after,
+        "exact": exact_summary,
+        "delta": {
+            "query_time_ms": round(before["query_time_ms"] - after["query_time_ms"], 2),
+            "precision_at_k": round(after["precision_at_k"] - before["precision_at_k"], 6),
+            "recall_at_k": round(after["recall_at_k"] - before["recall_at_k"], 6),
+            "overlap_count": after["overlap_count"] - before["overlap_count"],
+            "extra_persistent_memory_mb": 0.0,
+        },
+        "params": {
+            "before": old_params,
+            "after": dict(search_params or {}),
+            "method": "ANN coarse retrieval + exact rerank on candidates",
+        },
+        "ann_results": improved_ann.results,
+        "exact_results": exact.results,
+    }
+
+
+def _fetch_query_vector_for_benchmark(collection_name: str, cell_id: str):
+    fetch_vector = getattr(index, "_fetch_vector_by_cell_id", None)
+    if callable(fetch_vector):
+        return fetch_vector(collection_name=collection_name, cell_id=cell_id)
+
+    load_collection = getattr(index, "_load_collection", None)
+    if callable(load_collection):
+        collection = load_collection(collection_name)
+        offset = getattr(collection, "cell_id_to_offset", {}).get(cell_id)
+        if offset is not None:
+            return collection.vectors[offset].astype(float).tolist()
+
+    return None
+
+
+def _compare_ann_improvement_by_cell_id(**kwargs) -> dict:
+    compare = getattr(index, "compare_ann_improvement_by_cell_id", None)
+    if callable(compare):
+        return compare(**kwargs)
+    vector = _fetch_query_vector_for_benchmark(
+        collection_name=kwargs["collection_name"],
+        cell_id=kwargs["cell_id"],
+    )
+    if not vector:
+        evaluation = index.evaluate_query_by_cell_id(**kwargs)
+        return _benchmark_from_evaluation(evaluation, kwargs.get("top_k", 10))
+    return _build_ann_improvement_benchmark_from_vector(
+        collection_name=kwargs["collection_name"],
+        vector_dim=kwargs["vector_dim"],
+        vector=vector,
+        top_k=kwargs.get("top_k", 10),
+        filters=kwargs.get("filters"),
+        search_params=kwargs.get("search_params"),
+        vector_is_prepared=True,
+    )
+
+
+def _compare_ann_improvement_by_vector(**kwargs) -> dict:
+    compare = getattr(index, "compare_ann_improvement_by_vector", None)
+    if callable(compare):
+        return compare(**kwargs)
+    if not callable(getattr(index, "search_by_vector_with_timing", None)):
+        evaluation = index.evaluate_query_by_vector(**kwargs)
+        return _benchmark_from_evaluation(evaluation, kwargs.get("top_k", 10))
+    return _build_ann_improvement_benchmark_from_vector(
+        collection_name=kwargs["collection_name"],
+        vector_dim=kwargs["vector_dim"],
+        vector=kwargs["vector"],
+        top_k=kwargs.get("top_k", 10),
+        filters=kwargs.get("filters"),
+        search_params=kwargs.get("search_params"),
+        vector_is_prepared=kwargs.get("vector_is_prepared", False),
+    )
+
+
+
 def _index_summary_from_record(index_record):
     return {
         "source_path": index_record.get("data_path"),
@@ -1964,7 +2147,7 @@ def search_by_id():
         search_params = payload.get("search_params") or index_record.get("search_params") or {}
 
         if evaluate:
-            evaluation = index.evaluate_query_by_cell_id(
+            benchmark = _compare_ann_improvement_by_cell_id(
                 collection_name=index_record["collection_name"],
                 vector_dim=index_record["vector_dim"],
                 cell_id=cell_id,
@@ -1972,6 +2155,7 @@ def search_by_id():
                 filters=filters,
                 search_params=search_params,
             )
+            after = benchmark["after"]
             return jsonify(
                 {
                     "query": {
@@ -1980,15 +2164,16 @@ def search_by_id():
                         "filters": filters,
                         "index_id": index_record["id"],
                     },
-                    "query_time_ms": evaluation["ann_query_time_ms"],
-                    "results": evaluation["ann_results"],
+                    "query_time_ms": after["query_time_ms"],
+                    "results": benchmark["ann_results"],
                     "evaluation": {
-                        "precision_at_k": evaluation["precision_at_k"],
-                        "recall_at_k": evaluation["recall_at_k"],
-                        "overlap_count": evaluation["overlap_count"],
-                        "ann_query_time_ms": evaluation["ann_query_time_ms"],
-                        "exact_query_time_ms": evaluation["exact_query_time_ms"],
+                        "precision_at_k": after["precision_at_k"],
+                        "recall_at_k": after["recall_at_k"],
+                        "overlap_count": after["overlap_count"],
+                        "ann_query_time_ms": after["query_time_ms"],
+                        "exact_query_time_ms": benchmark["exact"]["query_time_ms"],
                     },
+                    "improvement_benchmark": benchmark,
                 }
             )
 
@@ -2037,7 +2222,7 @@ def search_by_vector():
         search_params = payload.get("search_params") or index_record.get("search_params") or {}
 
         if evaluate:
-            evaluation = index.evaluate_query_by_vector(
+            benchmark = _compare_ann_improvement_by_vector(
                 collection_name=index_record["collection_name"],
                 vector_dim=index_record["vector_dim"],
                 vector=vector,
@@ -2045,6 +2230,7 @@ def search_by_vector():
                 filters=filters,
                 search_params=search_params,
             )
+            after = benchmark["after"]
             return jsonify(
                 {
                     "query": {
@@ -2052,15 +2238,16 @@ def search_by_vector():
                         "filters": filters,
                         "index_id": index_record["id"],
                     },
-                    "query_time_ms": evaluation["ann_query_time_ms"],
-                    "results": evaluation["ann_results"],
+                    "query_time_ms": after["query_time_ms"],
+                    "results": benchmark["ann_results"],
                     "evaluation": {
-                        "precision_at_k": evaluation["precision_at_k"],
-                        "recall_at_k": evaluation["recall_at_k"],
-                        "overlap_count": evaluation["overlap_count"],
-                        "ann_query_time_ms": evaluation["ann_query_time_ms"],
-                        "exact_query_time_ms": evaluation["exact_query_time_ms"],
+                        "precision_at_k": after["precision_at_k"],
+                        "recall_at_k": after["recall_at_k"],
+                        "overlap_count": after["overlap_count"],
+                        "ann_query_time_ms": after["query_time_ms"],
+                        "exact_query_time_ms": benchmark["exact"]["query_time_ms"],
                     },
+                    "improvement_benchmark": benchmark,
                 }
             )
 
@@ -2107,7 +2294,7 @@ def search_by_vector_csv():
         vector, csv_info = _extract_query_vector_from_csv_upload(uploaded_file, row_index=row_index)
 
         if evaluate:
-            evaluation = index.evaluate_query_by_vector(
+            benchmark = _compare_ann_improvement_by_vector(
                 collection_name=index_record["collection_name"],
                 vector_dim=index_record["vector_dim"],
                 vector=vector,
@@ -2115,6 +2302,7 @@ def search_by_vector_csv():
                 filters=filters,
                 search_params=search_params,
             )
+            after = benchmark["after"]
             return jsonify(
                 {
                     "query": {
@@ -2123,15 +2311,16 @@ def search_by_vector_csv():
                         "index_id": index_record["id"],
                         "csv": csv_info,
                     },
-                    "query_time_ms": evaluation["ann_query_time_ms"],
-                    "results": evaluation["ann_results"],
+                    "query_time_ms": after["query_time_ms"],
+                    "results": benchmark["ann_results"],
                     "evaluation": {
-                        "precision_at_k": evaluation["precision_at_k"],
-                        "recall_at_k": evaluation["recall_at_k"],
-                        "overlap_count": evaluation["overlap_count"],
-                        "ann_query_time_ms": evaluation["ann_query_time_ms"],
-                        "exact_query_time_ms": evaluation["exact_query_time_ms"],
+                        "precision_at_k": after["precision_at_k"],
+                        "recall_at_k": after["recall_at_k"],
+                        "overlap_count": after["overlap_count"],
+                        "ann_query_time_ms": after["query_time_ms"],
+                        "exact_query_time_ms": benchmark["exact"]["query_time_ms"],
                     },
+                    "improvement_benchmark": benchmark,
                 }
             )
 

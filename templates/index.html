@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260607-css-fix-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260708-benchmark-exact-dynamic-1">
   </head>
   <body>
     <div class="site-ambience" aria-hidden="true">
@@ -46,7 +46,6 @@
           <p class="auth-description">面向单细胞数据读取、ANN 索引构建、相似检索与结果可视化的一体化分析平台。</p>
         </div>
 
-        <p class="auth-kicker">欢迎登录工作空间</p>
 
         <div class="auth-form-group">
           <label class="form-label" for="authUsername">账号</label>
@@ -783,6 +782,35 @@
 
             <div id="queryStatus" class="status-message neutral-message">输入细胞 ID 或向量后即可执行相似检索</div>
             <div id="evaluationSummary" class="status-message neutral-message">Exact evaluation is off.</div>
+            <section id="annBenchmarkPanel" class="ann-benchmark-panel d-none" hidden>
+              <div class="ann-benchmark-header">
+                <div>
+                  <p class="ann-benchmark-kicker">ANN Improvement Benchmark</p>
+                  <h3 class="ann-benchmark-title">性能对比</h3>
+                </div>
+                <span id="annBenchmarkDelta" class="ann-benchmark-delta">等待评估</span>
+              </div>
+              <div class="ann-benchmark-grid">
+                <article class="ann-benchmark-card is-improved">
+                  <span class="ann-benchmark-label">ANN</span>
+                  <dl>
+                    <div><dt>查询耗时</dt><dd id="annAfterTime">--</dd></div>
+                    <div><dt>Precision@K</dt><dd id="annAfterPrecision">--</dd></div>
+                    <div><dt>Recall@K</dt><dd id="annAfterRecall">--</dd></div>
+                    <div><dt>命中重叠</dt><dd id="annAfterOverlap">--</dd></div>
+                  </dl>
+                </article>
+                <article class="ann-benchmark-card">
+                  <span class="ann-benchmark-label">Exact 基准</span>
+                  <dl>
+                    <div><dt>查询耗时</dt><dd id="annExactTime">--</dd></div>
+                    <div><dt>Precision@K</dt><dd id="annExactPrecision">--</dd></div>
+                    <div><dt>Recall@K</dt><dd id="annExactRecall">--</dd></div>
+                    <div><dt>持久内存增量</dt><dd id="annMemoryDelta">0 MB</dd></div>
+                  </dl>
+                </article>
+              </div>
+            </section>
           </section>
         </section>
 
@@ -941,7 +969,7 @@
                     </div>
                   </details>
 
-                  <details class="stats-card">
+                  <details class="stats-card" open>
                     <summary class="stats-card-summary">
                       <span>Quality Statistics</span>
                       <span id="qualityScopeNote" class="stats-scope-note">全局</span>
@@ -1224,6 +1252,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260607-query-csv-1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260708-benchmark-exact-dynamic-1"></script>
   </body>
 </html>

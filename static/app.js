@@ -141,6 +141,20 @@ const searchByVectorBtn = document.querySelector("#searchByVectorBtn");
 const queryStatus = document.querySelector("#queryStatus");
 const evaluateToggle = document.querySelector("#evaluateToggle");
 const evaluationSummary = document.querySelector("#evaluationSummary");
+const annBenchmarkPanel = document.querySelector("#annBenchmarkPanel");
+const annBenchmarkDelta = document.querySelector("#annBenchmarkDelta");
+const annBeforeTime = document.querySelector("#annBeforeTime");
+const annBeforePrecision = document.querySelector("#annBeforePrecision");
+const annBeforeRecall = document.querySelector("#annBeforeRecall");
+const annBeforeOverlap = document.querySelector("#annBeforeOverlap");
+const annAfterTime = document.querySelector("#annAfterTime");
+const annAfterPrecision = document.querySelector("#annAfterPrecision");
+const annAfterRecall = document.querySelector("#annAfterRecall");
+const annAfterOverlap = document.querySelector("#annAfterOverlap");
+const annExactTime = document.querySelector("#annExactTime");
+const annExactPrecision = document.querySelector("#annExactPrecision");
+const annExactRecall = document.querySelector("#annExactRecall");
+const annMemoryDelta = document.querySelector("#annMemoryDelta");
 
 const overviewDatasetName = document.querySelector("#overviewDatasetName");
 const overviewTotalCells = document.querySelector("#overviewTotalCells");
@@ -1742,16 +1756,81 @@ function clearEvaluationMetrics() {
   if (exactTimeMetric) exactTimeMetric.textContent = "--";
 }
 
+function setBenchmarkVisible(visible) {
+  if (!annBenchmarkPanel) return;
+  annBenchmarkPanel.hidden = !visible;
+  annBenchmarkPanel.classList.toggle("d-none", !visible);
+}
+
+function clearAnnBenchmark() {
+  if (annBenchmarkDelta) annBenchmarkDelta.textContent = "等待评估";
+  if (annBeforeTime) annBeforeTime.textContent = "--";
+  if (annBeforePrecision) annBeforePrecision.textContent = "--";
+  if (annBeforeRecall) annBeforeRecall.textContent = "--";
+  if (annBeforeOverlap) annBeforeOverlap.textContent = "--";
+  if (annAfterTime) annAfterTime.textContent = "--";
+  if (annAfterPrecision) annAfterPrecision.textContent = "--";
+  if (annAfterRecall) annAfterRecall.textContent = "--";
+  if (annAfterOverlap) annAfterOverlap.textContent = "--";
+  if (annExactTime) annExactTime.textContent = "--";
+  if (annExactPrecision) annExactPrecision.textContent = "--";
+  if (annExactRecall) annExactRecall.textContent = "--";
+  if (annMemoryDelta) annMemoryDelta.textContent = "0 MB";
+}
+
+function renderAnnBenchmark(benchmark = null) {
+  if (!benchmark) {
+    clearAnnBenchmark();
+    setBenchmarkVisible(false);
+    return;
+  }
+  const before = benchmark.before || {};
+  const after = benchmark.after || {};
+  const exact = benchmark.exact || {};
+  const delta = benchmark.delta || {};
+  const isFallback = Boolean(benchmark.params && benchmark.params.fallback);
+  const formatOverlap = (value) => (value === null || value === undefined ? "--" : `${formatNumber(value)} / ${formatNumber(benchmark.top_k)}`);
+
+  setBenchmarkVisible(true);
+  if (annBeforeTime) annBeforeTime.textContent = formatTime(before.query_time_ms);
+  if (annBeforePrecision) annBeforePrecision.textContent = formatRate(before.precision_at_k);
+  if (annBeforeRecall) annBeforeRecall.textContent = formatRate(before.recall_at_k);
+  if (annBeforeOverlap) annBeforeOverlap.textContent = formatOverlap(before.overlap_count);
+  if (annAfterTime) annAfterTime.textContent = formatTime(after.query_time_ms);
+  if (annAfterPrecision) annAfterPrecision.textContent = formatRate(after.precision_at_k);
+  if (annAfterRecall) annAfterRecall.textContent = formatRate(after.recall_at_k);
+  if (annAfterOverlap) annAfterOverlap.textContent = formatOverlap(after.overlap_count);
+  if (annExactTime) annExactTime.textContent = formatTime(exact.query_time_ms);
+  if (annExactPrecision) annExactPrecision.textContent = formatRate(exact.precision_at_k);
+  if (annExactRecall) annExactRecall.textContent = formatRate(exact.recall_at_k);
+  if (annMemoryDelta) annMemoryDelta.textContent = `${formatMetric(delta.extra_persistent_memory_mb || 0)} MB`;
+
+  if (annBenchmarkDelta) {
+    if (isFallback) {
+      annBenchmarkDelta.textContent = "当前展示 ANN 与 Exact 评估";
+      return;
+    }
+    const timeDelta = Number(delta.query_time_ms || 0);
+    const precisionDelta = Number(delta.precision_at_k || 0);
+    const recallDelta = Number(delta.recall_at_k || 0);
+    const timeText = timeDelta > 0 ? `快 ${formatTime(timeDelta)}` : timeDelta < 0 ? `慢 ${formatTime(Math.abs(timeDelta))}` : "耗时持平";
+    annBenchmarkDelta.textContent = `${timeText} / P@K ${precisionDelta >= 0 ? "+" : ""}${formatRate(precisionDelta, true)} / R@K ${recallDelta >= 0 ? "+" : ""}${formatRate(recallDelta, true)}`;
+  }
+}
+
 function setEvaluationIdleMessage(enabled) {
   if (!evaluationSummary) return;
   if (enabled) {
+    clearAnnBenchmark();
+    setBenchmarkVisible(true);
     setMessage(
       evaluationSummary,
-      "Exact evaluation enabled. Query will run ANN + exact baseline.",
+      "Exact evaluation enabled. Query will run before/after ANN + exact baseline.",
       "neutral"
     );
     return;
   }
+  renderAnnBenchmark(null);
   setMessage(evaluationSummary, "Exact evaluation is off. Query runs ANN only.", "neutral");
 }
 
@@ -1788,7 +1867,9 @@ function refreshEvaluationUI(evaluation = null, enabledOverride = null) {
 function setEvaluationRunningMessage() {
   if (!evaluationSummary) return;
   clearEvaluationMetrics();
-  setMessage(evaluationSummary, "Running ANN + exact evaluation...", "neutral");
+  clearAnnBenchmark();
+  setBenchmarkVisible(true);
+  setMessage(evaluationSummary, "Running before/after ANN + exact evaluation...", "neutral");
 }
 
 function clearBuildPolling() {
@@ -4073,6 +4154,7 @@ function resetMainPageOutputs() {
   setQueryMetrics();
   setMessage(queryStatus, "Ready for query", "neutral");
   refreshEvaluationUI();
+  renderAnnBenchmark(null);
   showTableState("No query results yet. Build/activate an index then query.").catch(() => undefined);
   clearUmapHighlights();
 }
@@ -4832,12 +4914,14 @@ async function searchById() {
       "success"
     );
     refreshEvaluationUI(data.evaluation || null, evaluate);
+    renderAnnBenchmark(data.improvement_benchmark || null);
   } catch (error) {
     setMessage(queryStatus, error.message, "error");
     await showTableState(error.message, "error");
     clearUmapHighlights();
     setQueryMetrics({ mode: "Search by ID", resultCount: 0, queryTime: null, highlightCount: 0 });
     refreshEvaluationUI(null, evaluate);
+    renderAnnBenchmark(null);
   } finally {
     searchByIdBtn.disabled = false;
   }
@@ -4929,12 +5013,14 @@ async function searchByVector() {
       "success"
     );
     refreshEvaluationUI(data.evaluation || null, evaluate);
+    renderAnnBenchmark(data.improvement_benchmark || null);
   } catch (error) {
     setMessage(queryStatus, error.message, "error");
     await showTableState(error.message, "error");
     clearUmapHighlights();
     setQueryMetrics({ mode: "Search by Vector", resultCount: 0, queryTime: null, highlightCount: 0 });
     refreshEvaluationUI(null, evaluate);
+    renderAnnBenchmark(null);
   } finally {
     searchByVectorBtn.disabled = false;
   }
