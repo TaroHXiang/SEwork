@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Callable, Iterable
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urljoin
@@ -262,6 +263,12 @@ class CellVectorIndex:
         )
         return bool(response.get("exists"))
 
+    def get_collection_resource_usage(self, collection_name: str) -> dict:
+        return self._request_json(
+            method="GET",
+            path=f"/collections/{quote(collection_name)}/resource-usage",
+        )
+
     def delete_collection(self, collection_name: str) -> bool:
         try:
             response = self._request_json(
@@ -347,6 +354,10 @@ class CellVectorIndex:
 
 
 def _resolve_service_data_path(source_path: str) -> str:
+    parts = [part.strip() for part in re.split(r"[;\n,]+", str(source_path or "")) if part.strip()]
+    if len(parts) > 1:
+        return "; ".join(_resolve_service_data_path(part) for part in parts)
+
     candidate = Path(source_path)
     if not candidate.is_absolute():
         return str(candidate).replace("\\", "/")

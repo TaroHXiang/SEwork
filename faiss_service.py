@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from time import perf_counter
 
 from flask import Flask, jsonify, request
@@ -33,6 +34,11 @@ def handle_unexpected_error(exc):
 def _resolve_data_path(raw_path: str) -> str:
     if not raw_path:
         raise ValueError("data_path is required")
+
+    parts = [part.strip() for part in re.split(r"[;\n,]+", str(raw_path)) if part.strip()]
+    if len(parts) > 1:
+        return "; ".join(_resolve_data_path(part) for part in parts)
+
     candidate = Path(raw_path)
     if candidate.is_absolute():
         if candidate.exists():
@@ -58,6 +64,11 @@ def health():
 @app.get("/collections/<collection_name>/exists")
 def collection_exists(collection_name: str):
     return jsonify({"exists": engine.collection_exists(collection_name)})
+
+
+@app.get("/collections/<collection_name>/resource-usage")
+def collection_resource_usage(collection_name: str):
+    return jsonify(engine.get_collection_resource_usage(collection_name))
 
 
 @app.delete("/collections/<collection_name>")

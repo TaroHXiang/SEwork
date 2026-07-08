@@ -5,6 +5,7 @@ from functools import wraps
 import json
 import mimetypes
 from pathlib import Path
+import re
 from time import perf_counter
 from threading import Lock, Thread
 from uuid import uuid4
@@ -166,6 +167,7 @@ def _parse_top_k(raw_value, default=5):
 
 
 def _benchmark_from_evaluation(evaluation: dict, top_k: int) -> dict:
+    resource_usage = dict(evaluation.get("resource_usage") or {})
     after = {
         "query_time_ms": evaluation.get("ann_query_time_ms"),
         "precision_at_k": evaluation.get("precision_at_k"),
@@ -173,6 +175,9 @@ def _benchmark_from_evaluation(evaluation: dict, top_k: int) -> dict:
         "overlap_count": evaluation.get("overlap_count"),
         "result_count": len(evaluation.get("ann_results") or []),
         "extra_persistent_memory_mb": 0.0,
+        "persistent_index_size_mb": resource_usage.get("persistent_index_size_mb"),
+        "faiss_service_rss_mb": resource_usage.get("faiss_service_rss_mb"),
+        "faiss_service_rss_percent": resource_usage.get("faiss_service_rss_percent"),
     }
     return {
         "top_k": top_k,
@@ -184,11 +189,17 @@ def _benchmark_from_evaluation(evaluation: dict, top_k: int) -> dict:
             "overlap_count": None,
             "result_count": None,
             "extra_persistent_memory_mb": 0.0,
+            "persistent_index_size_mb": resource_usage.get("persistent_index_size_mb"),
+            "faiss_service_rss_mb": resource_usage.get("faiss_service_rss_mb"),
+            "faiss_service_rss_percent": resource_usage.get("faiss_service_rss_percent"),
         },
         "after": after,
         "exact": {
             "query_time_ms": evaluation.get("exact_query_time_ms"),
             "result_count": len(evaluation.get("exact_results") or []),
+            "persistent_index_size_mb": resource_usage.get("persistent_index_size_mb"),
+            "faiss_service_rss_mb": resource_usage.get("faiss_service_rss_mb"),
+            "faiss_service_rss_percent": resource_usage.get("faiss_service_rss_percent"),
         },
         "delta": {
             "query_time_ms": None,
@@ -197,6 +208,7 @@ def _benchmark_from_evaluation(evaluation: dict, top_k: int) -> dict:
             "overlap_count": None,
             "extra_persistent_memory_mb": 0.0,
         },
+        "resource_usage": resource_usage,
         "params": {
             "method": "当前后端未暴露改进前 ANN 基线，已展示 ANN 与 Exact 的评估结果。",
             "fallback": True,
@@ -250,6 +262,7 @@ def _build_ann_improvement_benchmark_from_vector(
         vector_is_prepared=vector_is_prepared,
         exact=True,
     )
+    resource_usage = _collection_resource_usage(collection_name)
     exact_ids = [item["cell_id"] for item in exact.results]
 
     def summarize(label: str, output, *, is_exact: bool = False) -> dict:
@@ -265,6 +278,9 @@ def _build_ann_improvement_benchmark_from_vector(
             "overlap_count": len(exact_ids) if is_exact else overlap_count,
             "result_count": len(ids),
             "extra_persistent_memory_mb": 0.0,
+            "persistent_index_size_mb": resource_usage.get("persistent_index_size_mb"),
+            "faiss_service_rss_mb": resource_usage.get("faiss_service_rss_mb"),
+            "faiss_service_rss_percent": resource_usage.get("faiss_service_rss_percent"),
         }
 
     before = summarize("before", old_ann)
@@ -282,6 +298,7 @@ def _build_ann_improvement_benchmark_from_vector(
             "overlap_count": after["overlap_count"] - before["overlap_count"],
             "extra_persistent_memory_mb": 0.0,
         },
+        "resource_usage": resource_usage,
         "params": {
             "before": old_params,
             "after": dict(search_params or {}),
@@ -290,6 +307,16 @@ def _build_ann_improvement_benchmark_from_vector(
         "ann_results": improved_ann.results,
         "exact_results": exact.results,
     }
+
+
+def _collection_resource_usage(collection_name: str) -> dict:
+    getter = getattr(index, "get_collection_resource_usage", None)
+    if callable(getter):
+        try:
+            return getter(collection_name)
+        except Exception:
+            return {}
+    return {}
 
 
 def _fetch_query_vector_for_benchmark(collection_name: str, cell_id: str):
@@ -317,6 +344,7 @@ def _compare_ann_improvement_by_cell_id(**kwargs) -> dict:
     )
     if not vector:
         evaluation = index.evaluate_query_by_cell_id(**kwargs)
+        evaluation["resource_usage"] = _collection_resource_usage(kwargs["collection_name"])
         return _benchmark_from_evaluation(evaluation, kwargs.get("top_k", 10))
     return _build_ann_improvement_benchmark_from_vector(
         collection_name=kwargs["collection_name"],
@@ -335,6 +363,7 @@ def _compare_ann_improvement_by_vector(**kwargs) -> dict:
         return compare(**kwargs)
     if not callable(getattr(index, "search_by_vector_with_timing", None)):
         evaluation = index.evaluate_query_by_vector(**kwargs)
+        evaluation["resource_usage"] = _collection_resource_usage(kwargs["collection_name"])
         return _benchmark_from_evaluation(evaluation, kwargs.get("top_k", 10))
     return _build_ann_improvement_benchmark_from_vector(
         collection_name=kwargs["collection_name"],
@@ -417,11 +446,29 @@ def _remove_cached_index_build_jobs(user_id: int, index_name: str) -> None:
 
 
 def _default_index_name(data_path: str):
-    stem = Path(data_path).stem or "dataset"
+    stems = _dataset_path_stems(data_path)
+    stem = "joint_" + "_".join(stems) if len(stems) > 1 else stems[0]
     safe_stem = "".join(ch if ch.isalnum() else "_" for ch in stem).strip("_").lower()
     safe_stem = safe_stem or "dataset"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     return f"{safe_stem}_{timestamp}"
+
+
+def _dataset_path_stems(data_path: str) -> list[str]:
+    parts = [part.strip() for part in re.split(r"[;\n,]+", str(data_path or "")) if part.strip()]
+    stems = []
+    for part in parts or [str(data_path or "").strip()]:
+        stem = Path(part).stem or "dataset"
+        safe = "".join(ch if ch.isalnum() else "_" for ch in stem).strip("_").lower()
+        stems.append(safe or "dataset")
+    return stems
+
+
+def _dataset_display_name(data_path: str) -> str:
+    stems = _dataset_path_stems(data_path)
+    if len(stems) > 1:
+        return "Joint: " + " + ".join(stems)
+    return stems[0] if stems else "dataset"
 
 
 def _workspace_relative_path(path: Path) -> str:
@@ -533,14 +580,14 @@ def _seed_dataset_info(data_path: str):
     data_path = str(data_path or "").strip()
     return {
         "source_path": data_path,
-        "dataset_name": Path(data_path).stem or "dataset",
+        "dataset_name": _dataset_display_name(data_path),
     }
 
 
 def _ensure_dataset_record(user_id: int, data_path: str, dataset_info: dict | None = None, status: str = "ready"):
     payload = dict(dataset_info or {})
     payload.setdefault("source_path", str(data_path or "").strip())
-    payload.setdefault("dataset_name", Path(str(data_path or "").strip()).stem or "dataset")
+    payload.setdefault("dataset_name", _dataset_display_name(data_path))
     return admin_store.upsert_dataset(user_id, data_path, dataset_info=payload, status=status)
 
 

@@ -127,6 +127,7 @@ const aiAssistantMessages = document.querySelector("#aiAssistantMessages");
 const filterCellType = document.querySelector("#filterCellType");
 const filterDisease = document.querySelector("#filterDisease");
 const filterAgeGroup = document.querySelector("#filterAgeGroup");
+const filterDatasetName = document.querySelector("#filterDatasetName");
 const filterSex = document.querySelector("#filterSex");
 const filterTissue = document.querySelector("#filterTissue");
 const filterDonorId = document.querySelector("#filterDonorId");
@@ -154,7 +155,10 @@ const annAfterOverlap = document.querySelector("#annAfterOverlap");
 const annExactTime = document.querySelector("#annExactTime");
 const annExactPrecision = document.querySelector("#annExactPrecision");
 const annExactRecall = document.querySelector("#annExactRecall");
-const annMemoryDelta = document.querySelector("#annMemoryDelta");
+const annAfterIndexSize = document.querySelector("#annAfterIndexSize");
+const annAfterRss = document.querySelector("#annAfterRss");
+const annExactIndexSize = document.querySelector("#annExactIndexSize");
+const annExactRss = document.querySelector("#annExactRss");
 
 const overviewDatasetName = document.querySelector("#overviewDatasetName");
 const overviewTotalCells = document.querySelector("#overviewTotalCells");
@@ -312,6 +316,7 @@ const METADATA_FILTER_FIELDS = [
   { key: "cell_type", element: filterCellType, label: "Cell Type" },
   { key: "disease", element: filterDisease, label: "Disease" },
   { key: "AgeGroup", element: filterAgeGroup, label: "Age Group" },
+  { key: "dataset_name", element: filterDatasetName, label: "Dataset" },
   { key: "sex", element: filterSex, label: "Sex" },
   { key: "tissue", element: filterTissue, label: "Tissue" },
   { key: "donor_id", element: filterDonorId, label: "Donor ID" },
@@ -810,6 +815,10 @@ function inferFormat(pathValue) {
 function shortPath(pathValue) {
   const path = trimText(pathValue);
   if (!path) return "--";
+  const parts = path.split(/[;\n,]+/).map((item) => trimText(item)).filter(Boolean);
+  if (parts.length > 1) {
+    return parts.map((item) => shortPath(item)).join(" + ");
+  }
   const normalized = path.replaceAll("\\", "/");
   const segments = normalized.split("/");
   if (segments.length <= 2) return path;
@@ -1775,7 +1784,26 @@ function clearAnnBenchmark() {
   if (annExactTime) annExactTime.textContent = "--";
   if (annExactPrecision) annExactPrecision.textContent = "--";
   if (annExactRecall) annExactRecall.textContent = "--";
-  if (annMemoryDelta) annMemoryDelta.textContent = "0 MB";
+  if (annAfterIndexSize) annAfterIndexSize.textContent = "--";
+  if (annAfterRss) annAfterRss.textContent = "--";
+  if (annExactIndexSize) annExactIndexSize.textContent = "--";
+  if (annExactRss) annExactRss.textContent = "--";
+}
+
+function formatMegabytes(value) {
+  if (value === null || value === undefined || value === "") return "--";
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return "--";
+  return `${formatMetric(numericValue)} MB`;
+}
+
+function formatMemoryUsage(mbValue, percentValue) {
+  const mbText = formatMegabytes(mbValue);
+  if (mbText === "--") return "--";
+  if (percentValue === null || percentValue === undefined || percentValue === "") return mbText;
+  const numericPercent = Number(percentValue);
+  if (!Number.isFinite(numericPercent)) return mbText;
+  return `${mbText} (${formatMetric(numericPercent)}%)`;
 }
 
 function renderAnnBenchmark(benchmark = null) {
@@ -1803,11 +1831,14 @@ function renderAnnBenchmark(benchmark = null) {
   if (annExactTime) annExactTime.textContent = formatTime(exact.query_time_ms);
   if (annExactPrecision) annExactPrecision.textContent = formatRate(exact.precision_at_k);
   if (annExactRecall) annExactRecall.textContent = formatRate(exact.recall_at_k);
-  if (annMemoryDelta) annMemoryDelta.textContent = `${formatMetric(delta.extra_persistent_memory_mb || 0)} MB`;
+  if (annAfterIndexSize) annAfterIndexSize.textContent = formatMegabytes(after.persistent_index_size_mb);
+  if (annAfterRss) annAfterRss.textContent = formatMemoryUsage(after.faiss_service_rss_mb, after.faiss_service_rss_percent);
+  if (annExactIndexSize) annExactIndexSize.textContent = formatMegabytes(exact.persistent_index_size_mb);
+  if (annExactRss) annExactRss.textContent = formatMemoryUsage(exact.faiss_service_rss_mb, exact.faiss_service_rss_percent);
 
   if (annBenchmarkDelta) {
     if (isFallback) {
-      annBenchmarkDelta.textContent = "当前展示 ANN 与 Exact 评估";
+      annBenchmarkDelta.textContent = "";
       return;
     }
     const timeDelta = Number(delta.query_time_ms || 0);

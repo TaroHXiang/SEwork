@@ -5986,7 +5986,7 @@ body {
 }
 
 #mainView .query-filter-grid-primary {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
 }
 
@@ -6426,6 +6426,36 @@ body {
   color: #111827;
   font-size: 16px;
   font-weight: 600;
+}
+
+#mainView #cellDetailPanel {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  grid-template-columns: 116px minmax(360px, max-content);
+  padding-bottom: 10px;
+  scrollbar-color: #93c5fd #eaf3ff;
+  scrollbar-width: thin;
+}
+
+#mainView #cellDetailPanel::-webkit-scrollbar {
+  height: 10px;
+}
+
+#mainView #cellDetailPanel::-webkit-scrollbar-track {
+  background: #eaf3ff;
+  border-radius: 999px;
+}
+
+#mainView #cellDetailPanel::-webkit-scrollbar-thumb {
+  background: #93c5fd;
+  border-radius: 999px;
+  border: 2px solid #eaf3ff;
+}
+
+#mainView #cellDetailPanel dt,
+#mainView #cellDetailPanel dd {
+  white-space: nowrap;
 }
 
 #mainView .stats-card {

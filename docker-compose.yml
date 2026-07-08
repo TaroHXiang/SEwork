@@ -18,6 +18,8 @@ services:
       context: .
       dockerfile: Dockerfile.faiss
     container_name: ann-faiss
+    working_dir: /workspace
+    command: ["python", "faiss_service.py"]
     ports:
       - "8000:8000"
     restart: unless-stopped

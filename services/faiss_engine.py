@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -284,7 +285,7 @@ class CellVectorIndex:
         distance_metric: str = DEFAULT_DISTANCE_METRIC,
         exact: bool | None = None,
     ) -> list[dict]:
-        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
+        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id, filters=filters)
         if not vector:
             raise ValueError(f"unknown cell_id: {cell_id}")
         return self.search_by_vector(
@@ -417,7 +418,7 @@ class CellVectorIndex:
         search_params: dict | None = None,
         distance_metric: str = DEFAULT_DISTANCE_METRIC,
     ) -> dict:
-        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
+        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id, filters=filters)
         if not vector:
             raise ValueError(f"unknown cell_id: {cell_id}")
         return self.evaluate_query_by_vector(
@@ -493,7 +494,7 @@ class CellVectorIndex:
         search_params: dict | None = None,
         distance_metric: str = DEFAULT_DISTANCE_METRIC,
     ) -> dict:
-        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id)
+        vector = self._fetch_vector_by_cell_id(collection_name=collection_name, cell_id=cell_id, filters=filters)
         if not vector:
             raise ValueError(f"unknown cell_id: {cell_id}")
         return self.compare_ann_improvement_by_vector(
@@ -555,6 +556,7 @@ class CellVectorIndex:
             vector_is_prepared=vector_is_prepared,
             exact=True,
         )
+        resource_usage = self.get_collection_resource_usage(collection_name)
 
         exact_ids = [item["cell_id"] for item in exact.results]
 
@@ -571,6 +573,9 @@ class CellVectorIndex:
                 "overlap_count": len(exact_ids) if is_exact else overlap_count,
                 "result_count": len(ids),
                 "extra_persistent_memory_mb": 0.0,
+                "persistent_index_size_mb": resource_usage.get("persistent_index_size_mb"),
+                "faiss_service_rss_mb": resource_usage.get("faiss_service_rss_mb"),
+                "faiss_service_rss_percent": resource_usage.get("faiss_service_rss_percent"),
             }
 
         old_summary = summarize("before", old_ann)
@@ -593,6 +598,7 @@ class CellVectorIndex:
                 "overlap_count": improved_summary["overlap_count"] - old_summary["overlap_count"],
                 "extra_persistent_memory_mb": 0.0,
             },
+            "resource_usage": resource_usage,
             "params": {
                 "before": old_params,
                 "after": dict(search_params or {}),
@@ -613,6 +619,28 @@ class CellVectorIndex:
             collection_dir / "visualization.npy",
         ]
         return all(path.exists() for path in required_files)
+
+    def get_collection_resource_usage(self, collection_name: str) -> dict:
+        collection_dir = self._collection_dir(collection_name)
+        if not collection_dir.exists():
+            raise FileNotFoundError(f"collection not found: {collection_name}")
+
+        persistent_bytes = sum(
+            path.stat().st_size
+            for path in collection_dir.rglob("*")
+            if path.is_file()
+        )
+        rss_mb = _current_process_rss_mb()
+        rss_percent = _current_process_memory_percent()
+        return {
+            "collection": collection_name,
+            "persistent_index_size_bytes": int(persistent_bytes),
+            "persistent_index_size_mb": round(persistent_bytes / 1024 / 1024, 2),
+            "faiss_service_rss_mb": rss_mb,
+            "faiss_service_rss_percent": rss_percent,
+            "runtime_rss_mb": rss_mb,
+            "runtime_rss_percent": rss_percent,
+        }
 
     def delete_collection(self, collection_name: str) -> bool:
         collection_dir = self._collection_dir(collection_name)
@@ -638,12 +666,58 @@ class CellVectorIndex:
         if dataset_summary is not None:
             self.dataset_summary = dataset_summary
 
-    def _fetch_vector_by_cell_id(self, collection_name: str, cell_id: str) -> list[float] | None:
+    def _fetch_vector_by_cell_id(
+        self,
+        collection_name: str,
+        cell_id: str,
+        filters: dict[str, str] | None = None,
+    ) -> list[float] | None:
         collection = self._load_collection(collection_name)
         offset = collection.cell_id_to_offset.get(cell_id)
         if offset is None:
+            offset = self._resolve_original_cell_id_offset(collection, cell_id, filters=filters)
+        if offset is None:
             return None
         return collection.vectors[offset].astype(float).tolist()
+
+    def _resolve_original_cell_id_offset(
+        self,
+        collection: LoadedCollection,
+        cell_id: str,
+        filters: dict[str, str] | None = None,
+    ) -> int | None:
+        requested = str(cell_id or "").strip()
+        if not requested:
+            return None
+
+        candidate_offsets: list[int] = []
+        for offset, stored_cell_id in enumerate(collection.cell_ids):
+            metadata = collection.metadata[offset] or {}
+            original_cell_id = str(metadata.get("original_cell_id") or "").strip()
+            if original_cell_id == requested or str(stored_cell_id).endswith(f"::{requested}"):
+                candidate_offsets.append(offset)
+
+        if not candidate_offsets:
+            return None
+
+        allowed_offsets = set(_matching_offsets(collection.metadata, filters).tolist())
+        has_active_filters = any(str(value).strip() for value in (filters or {}).values() if value is not None)
+        if has_active_filters:
+            candidate_offsets = [offset for offset in candidate_offsets if offset in allowed_offsets]
+
+        if len(candidate_offsets) == 1:
+            return candidate_offsets[0]
+        if len(candidate_offsets) > 1:
+            datasets = sorted(
+                {
+                    str((collection.metadata[offset] or {}).get("dataset_name") or collection.cell_ids[offset].split("::", 1)[0])
+                    for offset in candidate_offsets
+                }
+            )
+            raise ValueError(
+                f"细胞 ID 在多个数据集中重复：{requested}。请在 Dataset 筛选中选择一个数据集，或使用带前缀的 cell_id，例如 {datasets[0]}::{requested}。"
+            )
+        return None
 
     def _collection_dir(self, collection_name: str) -> Path:
         return self.storage_path / collection_name
@@ -1310,6 +1384,25 @@ def _matching_offsets(metadata_rows: list[dict], filters: dict[str, str] | None)
         if all(str(payload.get(key, "")).strip() == value for key, value in normalized_filters.items()):
             matched.append(offset)
     return np.asarray(matched, dtype=np.int64)
+
+
+def _current_process_rss_mb() -> float | None:
+    try:
+        import psutil
+
+        rss_bytes = psutil.Process(os.getpid()).memory_info().rss
+        return round(float(rss_bytes) / 1024 / 1024, 2)
+    except Exception:
+        return None
+
+
+def _current_process_memory_percent() -> float | None:
+    try:
+        import psutil
+
+        return round(float(psutil.Process(os.getpid()).memory_percent()), 4)
+    except Exception:
+        return None
 
 
 def _ensure_two_dim_points(points: np.ndarray) -> np.ndarray:

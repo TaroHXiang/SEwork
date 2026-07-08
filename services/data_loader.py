@@ -15,6 +15,7 @@ DEFAULT_METADATA_FILTER_FIELDS = [
     "cell_type",
     "disease",
     "AgeGroup",
+    "dataset_name",
     "sex",
     "tissue",
     "donor_id",
@@ -116,6 +117,31 @@ PREVIEW_METADATA_FIELDS = [
 ]
 
 
+def _parse_data_paths(data_path: str | Path | list[str | Path] | tuple[str | Path, ...]) -> list[Path]:
+    if isinstance(data_path, (list, tuple)):
+        raw_items = [str(item).strip() for item in data_path]
+    else:
+        raw_text = str(data_path or "").strip()
+        raw_items = [item.strip() for item in re.split(r"[;\n,]+", raw_text)]
+    paths = [Path(item) for item in raw_items if item]
+    if not paths:
+        raise ValueError("data_path is required")
+    return paths
+
+
+def _dataset_source_prefix(dataset_name: str, dataset_index: int) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_]+", "_", str(dataset_name or "")).strip("_").lower()
+    return normalized or f"dataset_{dataset_index + 1}"
+
+
+def _visualization_x_offset(points: np.ndarray) -> float:
+    if points.size == 0:
+        return 0.0
+    x_values = points[:, 0]
+    span = float(np.nanmax(x_values) - np.nanmin(x_values))
+    return max(span * 1.35, 10.0)
+
+
 @dataclass
 class CellVectorDataset:
     cell_ids: list[str]
@@ -152,6 +178,10 @@ class CellVectorDataset:
 
 
 def load_cell_vectors(data_path: str | Path) -> CellVectorDataset:
+    paths = _parse_data_paths(data_path)
+    if len(paths) > 1:
+        return load_joint_cell_vectors(paths)
+
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"data file not found: {path}")
@@ -165,7 +195,119 @@ def load_cell_vectors(data_path: str | Path) -> CellVectorDataset:
     raise ValueError("unsupported data format, expected .csv or .h5ad")
 
 
+def load_joint_cell_vectors(data_paths: list[str | Path]) -> CellVectorDataset:
+    paths = _parse_data_paths(data_paths)
+    if len(paths) < 2:
+        return load_cell_vectors(paths[0])
+
+    datasets = [load_cell_vectors(path) for path in paths]
+    vector_dims = {dataset.vector_dim for dataset in datasets}
+    if len(vector_dims) != 1:
+        detail = ", ".join(f"{Path(dataset.source_path).name}: {dataset.vector_dim}" for dataset in datasets)
+        raise ValueError(f"joint index requires matching vector dimensions, got {detail}")
+
+    cell_ids: list[str] = []
+    metadata: list[dict] = []
+    visualization_parts: list[np.ndarray] = []
+    metadata_fields = set()
+    total_gene_count = 0
+    embedding_keys = []
+    source_formats = []
+
+    for dataset_index, dataset in enumerate(datasets):
+        source_path = str(dataset.source_path)
+        dataset_name = Path(source_path).stem or f"dataset_{dataset_index + 1}"
+        source_prefix = _dataset_source_prefix(dataset_name, dataset_index)
+        total_gene_count += int(dataset.gene_count or 0)
+        embedding_keys.append(str(dataset.embedding_key))
+        source_formats.append(str(dataset.source_format))
+
+        for raw_cell_id, raw_metadata in zip(dataset.cell_ids, dataset.metadata):
+            cell_ids.append(f"{source_prefix}::{raw_cell_id}")
+            enriched = dict(raw_metadata or {})
+            enriched.update(
+                {
+                    "dataset_id": source_prefix,
+                    "dataset_name": dataset_name,
+                    "source_path": source_path,
+                    "original_cell_id": str(raw_cell_id),
+                }
+            )
+            metadata.append(enriched)
+            metadata_fields.update(enriched.keys())
+
+        points = np.asarray(dataset.visualization_points, dtype=np.float32)
+        if points.ndim != 2 or points.shape[1] < 2:
+            points = np.zeros((dataset.cell_count, 2), dtype=np.float32)
+        points = points[:, :2].copy()
+        if len(datasets) > 1 and len(points):
+            points[:, 0] += float(dataset_index) * _visualization_x_offset(points)
+        visualization_parts.append(points)
+
+    vectors = np.vstack([dataset.vectors.astype(np.float32, copy=False) for dataset in datasets])
+    visualization_points = (
+        np.vstack(visualization_parts).astype(np.float32, copy=False)
+        if visualization_parts
+        else np.empty((0, 2), dtype=np.float32)
+    )
+    source_paths = [str(path) for path in paths]
+    return CellVectorDataset(
+        cell_ids=cell_ids,
+        vectors=vectors,
+        metadata=metadata,
+        visualization_points=visualization_points,
+        visualization_source="joint_dataset_offsets",
+        metadata_fields=sorted(metadata_fields),
+        source_path="; ".join(source_paths),
+        source_format="joint:" + "+".join(sorted(set(source_formats))),
+        gene_count=total_gene_count,
+        embedding_key="joint:" + "+".join(sorted(set(embedding_keys))),
+        vector_transform={
+            "type": "joint_dataset",
+            "sources": [
+                {
+                    "source_path": dataset.source_path,
+                    "cell_count": dataset.cell_count,
+                    "vector_dim": dataset.vector_dim,
+                    "embedding_key": dataset.embedding_key,
+                    "source_format": dataset.source_format,
+                }
+                for dataset in datasets
+            ],
+        },
+    )
+
+
 def inspect_cell_dataset(data_path: str | Path) -> dict:
+    paths = _parse_data_paths(data_path)
+    if len(paths) > 1:
+        inspected = [inspect_cell_dataset(path) for path in paths]
+        vector_dims = sorted({int(item.get("vector_dim") or 0) for item in inspected})
+        source_paths = [str(path) for path in paths]
+        return {
+            "source_path": "; ".join(source_paths),
+            "source_paths": source_paths,
+            "format": "joint",
+            "source_format": "joint",
+            "is_joint": True,
+            "dataset_count": len(inspected),
+            "datasets": inspected,
+            "cell_count": sum(int(item.get("cell_count") or 0) for item in inspected),
+            "gene_count": sum(int(item.get("gene_count") or 0) for item in inspected),
+            "vector_dim": vector_dims[0] if len(vector_dims) == 1 else None,
+            "vector_dims": vector_dims,
+            "embedding_key": "joint",
+            "visualization_source": "joint_dataset_offsets",
+            "metadata_columns": sorted(
+                {
+                    column
+                    for item in inspected
+                    for column in (item.get("metadata_columns") or [])
+                }
+                | {"dataset_id", "dataset_name", "source_path", "original_cell_id"}
+            ),
+        }
+
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"data file not found: {path}")
@@ -235,6 +377,57 @@ def load_dataset_visualization_preview(
     if limit < 1 or limit > 100000:
         raise ValueError("limit must be between 1 and 100000")
 
+    paths = _parse_data_paths(data_path)
+    if len(paths) > 1:
+        per_dataset_limit = max(1, int(np.ceil(limit / len(paths))))
+        previews = [
+            load_dataset_visualization_preview(path, limit=per_dataset_limit, seed=seed + idx, level=sampling_level)
+            for idx, path in enumerate(paths)
+        ]
+        points = []
+        total_points = 0
+        metadata_columns = set()
+        for idx, preview in enumerate(previews):
+            dataset_name = Path(preview.get("source_path") or paths[idx]).stem
+            source_prefix = _dataset_source_prefix(dataset_name, idx)
+            preview_points = list(preview.get("points") or [])
+            x_values = [float(point.get("x") or 0.0) for point in preview_points]
+            x_offset = (max(x_values) - min(x_values) if x_values else 10.0)
+            x_offset = max(float(x_offset) * 1.35, 10.0) * idx
+            for point in preview_points:
+                original_cell_id = str(point.get("cell_id") or "")
+                metadata = dict(point.get("metadata") or {})
+                metadata.update(
+                    {
+                        "dataset_id": source_prefix,
+                        "dataset_name": dataset_name,
+                        "source_path": str(paths[idx]),
+                        "original_cell_id": original_cell_id,
+                    }
+                )
+                metadata_columns.update(metadata.keys())
+                points.append(
+                    {
+                        "cell_id": f"{source_prefix}::{original_cell_id}",
+                        "x": float(point.get("x") or 0.0) + x_offset,
+                        "y": float(point.get("y") or 0.0),
+                        "metadata": metadata,
+                    }
+                )
+            total_points += int(preview.get("total_points") or 0)
+        return {
+            "source_path": "; ".join(str(path) for path in paths),
+            "source_paths": [str(path) for path in paths],
+            "format": "joint",
+            "total_points": total_points,
+            "returned_points": len(points),
+            "sampled": total_points > len(points),
+            "sampling_level": sampling_level,
+            "visualization_source": "joint_dataset_offsets",
+            "metadata_columns": sorted(metadata_columns),
+            "points": points[:limit],
+        }
+
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"data file not found: {path}")
@@ -248,6 +441,12 @@ def load_dataset_visualization_preview(
 
 
 def load_dataset_analytics(data_path: str | Path) -> dict:
+    paths = _parse_data_paths(data_path)
+    if len(paths) > 1:
+        inspected = [inspect_cell_dataset(path) for path in paths]
+        analytics_parts = [load_dataset_analytics(path) for path in paths]
+        return _merge_joint_dataset_analytics(paths=paths, inspected=inspected, analytics_parts=analytics_parts)
+
     path = Path(data_path)
     if not path.exists():
         raise FileNotFoundError(f"data file not found: {path}")
@@ -260,6 +459,169 @@ def load_dataset_analytics(data_path: str | Path) -> dict:
     raise ValueError("unsupported data format, expected .csv or .h5ad")
 
 
+def _weighted_average(values: list[tuple[float | None, int]]) -> float | None:
+    weighted_sum = 0.0
+    total_weight = 0
+    for value, weight in values:
+        if value is None or weight <= 0:
+            continue
+        weighted_sum += float(value) * int(weight)
+        total_weight += int(weight)
+    if total_weight <= 0:
+        return None
+    return round(weighted_sum / total_weight, 4)
+
+
+def _merge_histograms(histograms: list[dict]) -> dict:
+    bucket_counts: dict[float, int] = {}
+    for histogram in histograms:
+        bins = histogram.get("bins") or []
+        counts = histogram.get("counts") or []
+        for bin_value, count in zip(bins, counts):
+            try:
+                key = round(float(bin_value), 4)
+            except Exception:
+                continue
+            bucket_counts[key] = bucket_counts.get(key, 0) + int(count or 0)
+    if not bucket_counts:
+        return {"bins": [], "counts": []}
+    ordered = sorted(bucket_counts.items(), key=lambda item: item[0])
+    return {
+        "bins": [value for value, _ in ordered[:30]],
+        "counts": [count for _, count in ordered[:30]],
+    }
+
+
+def _merge_joint_dataset_analytics(
+    *,
+    paths: list[Path],
+    inspected: list[dict],
+    analytics_parts: list[dict],
+) -> dict:
+    source_paths = [str(path) for path in paths]
+    total_cells = sum(int((part.get("summary") or {}).get("total_cells") or 0) for part in analytics_parts)
+    gene_count_total = sum(int(item.get("gene_count") or 0) for item in inspected)
+
+    cell_type_accumulator: dict[str, dict] = {}
+    for part in analytics_parts:
+        for row in part.get("cell_type_distribution") or []:
+            name = str(row.get("name") or "Unknown")
+            count = int(row.get("count") or row.get("value") or 0)
+            current = cell_type_accumulator.setdefault(
+                name,
+                {
+                    "name": name,
+                    "count": 0,
+                    "gene_values": [],
+                    "mito_values": [],
+                },
+            )
+            current["count"] += count
+            current["gene_values"].append((row.get("avg_gene_count"), count))
+            current["mito_values"].append((row.get("avg_mito_pct"), count))
+
+    cell_type_rows = []
+    for item in sorted(cell_type_accumulator.values(), key=lambda row: row["count"], reverse=True)[:12]:
+        cell_type_rows.append(
+            {
+                "name": item["name"],
+                "count": int(item["count"]),
+                "avg_gene_count": _weighted_average(item["gene_values"]),
+                "avg_mito_pct": _weighted_average(item["mito_values"]),
+            }
+        )
+
+    sample_labels: list[str] = []
+    sample_type_counts: dict[str, dict[str, int]] = {}
+    all_cell_types: list[str] = []
+    for path, part in zip(paths, analytics_parts):
+        dataset_name = Path(path).stem or "dataset"
+        sample_distribution = part.get("sample_distribution") or {}
+        samples = [str(value) for value in (sample_distribution.get("samples") or [])]
+        for sample in samples:
+            label = f"{dataset_name}:{sample}"
+            sample_labels.append(label)
+            sample_type_counts.setdefault(label, {})
+        for series in sample_distribution.get("series") or []:
+            cell_type = str(series.get("name") or "Unknown")
+            if cell_type not in all_cell_types:
+                all_cell_types.append(cell_type)
+            for sample, value in zip(samples, series.get("data") or []):
+                label = f"{dataset_name}:{sample}"
+                sample_type_counts.setdefault(label, {})[cell_type] = int(value or 0)
+
+    sample_labels = sample_labels[:12]
+    all_cell_types = all_cell_types[:10]
+    sample_table = pd.DataFrame(
+        [
+            {cell_type: sample_type_counts.get(sample, {}).get(cell_type, 0) for cell_type in all_cell_types}
+            for sample in sample_labels
+        ],
+        index=sample_labels,
+    )
+    sample_distribution = {
+        "samples": sample_labels,
+        "cell_types": all_cell_types,
+        "series": [
+            {
+                "name": cell_type,
+                "data": [int(sample_type_counts.get(sample, {}).get(cell_type, 0)) for sample in sample_labels],
+            }
+            for cell_type in all_cell_types
+        ],
+        "similarity": _build_similarity_matrix(sample_table) if not sample_table.empty else {"labels": [], "matrix": []},
+    }
+
+    boxplot_labels: list[str] = []
+    boxplot_series: list[list[float]] = []
+    for part in analytics_parts:
+        quality = part.get("quality") or {}
+        boxplot = quality.get("boxplot_gene_count") or {}
+        for label, series in zip(boxplot.get("labels") or [], boxplot.get("series") or []):
+            if label in boxplot_labels:
+                continue
+            boxplot_labels.append(str(label))
+            boxplot_series.append(series)
+            if len(boxplot_labels) >= 8:
+                break
+        if len(boxplot_labels) >= 8:
+            break
+
+    summary_values = [(part.get("summary") or {}, int((part.get("summary") or {}).get("total_cells") or 0)) for part in analytics_parts]
+    return {
+        "dataset_name": "Joint Dataset",
+        "source_path": "; ".join(source_paths),
+        "source_paths": source_paths,
+        "format": "joint",
+        "summary": {
+            "dataset_name": "Joint Dataset",
+            "total_cells": total_cells,
+            "cell_type_count": len(cell_type_accumulator),
+            "sample_count": len(sample_labels),
+            "avg_gene_count": _weighted_average([(summary.get("avg_gene_count"), weight) for summary, weight in summary_values]),
+            "avg_umi_count": _weighted_average([(summary.get("avg_umi_count"), weight) for summary, weight in summary_values]),
+            "avg_mito_pct": _weighted_average([(summary.get("avg_mito_pct"), weight) for summary, weight in summary_values]),
+            "gene_count_total": gene_count_total,
+            "vector_dim": inspected[0].get("vector_dim") if inspected else None,
+            "embedding_key": "joint",
+            "visualization_source": "joint_dataset_offsets",
+            "dataset_count": len(paths),
+        },
+        "cell_type_distribution": cell_type_rows,
+        "sample_distribution": sample_distribution,
+        "quality": {
+            "gene_count_histogram": _merge_histograms([(part.get("quality") or {}).get("gene_count_histogram") or {} for part in analytics_parts]),
+            "umi_count_histogram": _merge_histograms([(part.get("quality") or {}).get("umi_count_histogram") or {} for part in analytics_parts]),
+            "mito_pct_histogram": _merge_histograms([(part.get("quality") or {}).get("mito_pct_histogram") or {} for part in analytics_parts]),
+            "boxplot_gene_count": {
+                "labels": boxplot_labels,
+                "series": boxplot_series,
+            },
+        },
+        "datasets": inspected,
+    }
+
+
 def load_dataset_metadata_options(
     data_path: str | Path,
     fields: list[str] | None = None,
@@ -268,14 +630,54 @@ def load_dataset_metadata_options(
     if max_values_per_field < 1:
         raise ValueError("max_values_per_field must be greater than 0")
 
-    path = Path(data_path)
-    if not path.exists():
-        raise FileNotFoundError(f"data file not found: {path}")
-
     target_fields = list(fields or DEFAULT_METADATA_FILTER_FIELDS)
     target_fields = [field for field in target_fields if field]
     if not target_fields:
         target_fields = list(DEFAULT_METADATA_FILTER_FIELDS)
+
+    paths = _parse_data_paths(data_path)
+    if len(paths) > 1:
+        merged_options: dict[str, set[str]] = {field: set() for field in target_fields}
+        merged_options.setdefault("dataset_name", set())
+        unique_counts: dict[str, int] = {}
+        resolved_fields: dict[str, str] = {}
+        missing_fields = set()
+        truncated_fields = set()
+        available_fields = set()
+        for path in paths:
+            info = load_dataset_metadata_options(path, fields=target_fields, max_values_per_field=max_values_per_field)
+            dataset_name = Path(path).stem
+            merged_options["dataset_name"].add(dataset_name)
+            available_fields.update(info.get("available_fields") or [])
+            resolved_fields.update(info.get("resolved_fields") or {})
+            missing_fields.update(info.get("missing_fields") or [])
+            truncated_fields.update(info.get("truncated_fields") or [])
+            for field, values in (info.get("options") or {}).items():
+                merged_options.setdefault(field, set()).update(str(value) for value in values if value is not None)
+        options = {
+            field: sorted(values)[:max_values_per_field]
+            for field, values in merged_options.items()
+            if values
+        }
+        for field, values in merged_options.items():
+            unique_counts[field] = len(values)
+            if len(values) > max_values_per_field:
+                truncated_fields.add(field)
+        return {
+            "source_path": "; ".join(str(path) for path in paths),
+            "source_paths": [str(path) for path in paths],
+            "format": "joint",
+            "available_fields": sorted(available_fields | {"dataset_name", "dataset_id", "source_path", "original_cell_id"}),
+            "options": options,
+            "unique_counts": unique_counts,
+            "truncated_fields": sorted(truncated_fields),
+            "resolved_fields": resolved_fields,
+            "missing_fields": sorted(missing_fields),
+        }
+
+    path = paths[0]
+    if not path.exists():
+        raise FileNotFoundError(f"data file not found: {path}")
 
     suffix = path.suffix.lower()
     if suffix == ".csv":

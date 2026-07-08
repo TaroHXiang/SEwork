@@ -8,9 +8,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700;800&family=Noto+Serif+SC:wght@600;700;900&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260708-benchmark-exact-dynamic-1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20260708-auth-flash-1">
   </head>
-  <body>
+  <body class="auth-mode">
     <div class="site-ambience" aria-hidden="true">
       <span class="ambient-orb orb-cyan"></span>
       <span class="ambient-orb orb-blue"></span>
@@ -704,6 +704,12 @@
                     <option value="">全部</option>
                   </select>
                 </div>
+                <div>
+                  <label class="form-label" for="filterDatasetName">Dataset</label>
+                  <select id="filterDatasetName" class="form-select dashboard-input">
+                    <option value="">All</option>
+                  </select>
+                </div>
               </div>
 
               <details class="filter-bar-more" open>
@@ -798,6 +804,8 @@
                     <div><dt>Precision@K</dt><dd id="annAfterPrecision">--</dd></div>
                     <div><dt>Recall@K</dt><dd id="annAfterRecall">--</dd></div>
                     <div><dt>命中重叠</dt><dd id="annAfterOverlap">--</dd></div>
+                    <div><dt>索引文件占用</dt><dd id="annAfterIndexSize">--</dd></div>
+                    <div><dt>FAISS服务内存</dt><dd id="annAfterRss">--</dd></div>
                   </dl>
                 </article>
                 <article class="ann-benchmark-card">
@@ -806,7 +814,6 @@
                     <div><dt>查询耗时</dt><dd id="annExactTime">--</dd></div>
                     <div><dt>Precision@K</dt><dd id="annExactPrecision">--</dd></div>
                     <div><dt>Recall@K</dt><dd id="annExactRecall">--</dd></div>
-                    <div><dt>持久内存增量</dt><dd id="annMemoryDelta">0 MB</dd></div>
                   </dl>
                 </article>
               </div>
@@ -1252,6 +1259,6 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-    <script src="{{ url_for('static', filename='app.js') }}?v=20260708-benchmark-exact-dynamic-1"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v=20260708-auth-flash-1"></script>
   </body>
 </html>
